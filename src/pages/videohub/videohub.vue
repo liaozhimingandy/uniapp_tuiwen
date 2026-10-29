@@ -214,7 +214,8 @@ onReachBottom(() => {
 
 <style lang="scss" scoped>
 .hub {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--window-top, 0px) - var(--window-bottom, 0px));
+  box-sizing: border-box;
   padding: 24rpx 24rpx 60rpx;
   background-color: #f7f8fa;
 }

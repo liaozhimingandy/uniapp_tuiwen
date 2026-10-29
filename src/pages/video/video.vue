@@ -805,7 +805,7 @@ onUnload(() => {
 
 <style lang="scss" scoped>
 .feed {
-  height: 100vh;
+  height: calc(100vh - var(--window-bottom, 0px));
   background-color: #000000;
 }
 
@@ -882,13 +882,13 @@ onUnload(() => {
 }
 
 .swiper {
-  height: 100vh;
+  height: calc(100vh - var(--window-bottom, 0px));
 }
 
 .slide {
   position: relative;
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--window-bottom, 0px));
   background-color: #000000;
   overflow: hidden;
 }
@@ -908,7 +908,7 @@ onUnload(() => {
 /* 横屏视频手动旋转 90°: 宽高对调后居中铺满竖屏 */
 .poster--rotated,
 .player--rotated {
-  width: 100vh;
+  width: calc(100vh - var(--window-bottom, 0px));
   height: 100vw;
   top: 50%;
   left: 50%;
@@ -1140,7 +1140,7 @@ onUnload(() => {
 }
 
 .state {
-  height: 100vh;
+  height: calc(100vh - var(--window-bottom, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;

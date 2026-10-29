@@ -248,7 +248,8 @@ onPullDownRefresh(() => {
 
 <style lang="scss" scoped>
 .page {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--window-top, 0px) - var(--window-bottom, 0px));
+  box-sizing: border-box;
   background-color: $bg-page;
   /* 给底部输入栏留位，否则最后一条评论会被挡住 */
   padding-bottom: calc(120rpx + env(safe-area-inset-bottom));

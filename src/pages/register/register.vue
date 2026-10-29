@@ -190,7 +190,8 @@ const goLogin = () => {
 
 <style lang="scss" scoped>
 .page {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--window-top, 0px) - var(--window-bottom, 0px));
+  box-sizing: border-box;
   padding: 48rpx 48rpx calc(48rpx + env(safe-area-inset-bottom));
   background-color: $bg-card;
 }

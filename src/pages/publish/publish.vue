@@ -208,7 +208,8 @@ const submit = async () => {
 
 <style lang="scss" scoped>
 .page {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--window-top, 0px) - var(--window-bottom, 0px));
+  box-sizing: border-box;
   background-color: $bg-card;
   padding: 24rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
   display: flex;

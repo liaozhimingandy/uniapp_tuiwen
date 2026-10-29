@@ -362,7 +362,8 @@ onReachBottom(() => {
 
 <style lang="scss" scoped>
 .page {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--window-top, 0px) - var(--window-bottom, 0px));
+  box-sizing: border-box;
   background-color: #141423;
   color: #ffffff;
   padding-bottom: calc(40rpx + env(safe-area-inset-bottom));
