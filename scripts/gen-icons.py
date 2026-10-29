@@ -85,6 +85,18 @@ def in_ring(x, y, cx, cy, r_out, r_in):
     return in_circle(x, y, cx, cy, r_out) and not in_circle(x, y, cx, cy, r_in)
 
 
+def in_rounded_rect(x, y, x0, y0, x1, y1, r):
+    """圆角矩形（含边界），r 为圆角半径"""
+    if x < x0 or x > x1 or y < y0 or y > y1:
+        return False
+    # 四个角用圆判断，其余区域直接命中
+    if x0 + r <= x <= x1 - r or y0 + r <= y <= y1 - r:
+        return True
+    cx = x0 + r if x < x0 + r else x1 - r
+    cy = y0 + r if y < y0 + r else y1 - r
+    return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
+
+
 # ----------------------------- 图标形状 -----------------------------
 # 坐标系统一按 27x27 设计，绘制时乘以 (SIZE/27) 缩放
 
@@ -146,6 +158,35 @@ def shape_me(x, y):
     return head or body
 
 
+def shape_video(x, y):
+    """视频：圆角矩形描边 + 居中播放三角"""
+    s = SIZE / 27.0
+    px, py = x * s, y * s
+    frame_out = (2.6 * s, 6.0 * s, 24.4 * s, 21.0 * s, 3.8 * s)
+    frame_in = (5.0 * s, 8.4 * s, 22.0 * s, 18.6 * s, 2.0 * s)
+    if in_rounded_rect(px, py, *frame_out) and not in_rounded_rect(px, py, *frame_in):
+        return True
+    # 播放三角（略微右移，视觉重心才居中）
+    tri = [(11.2 * s, 10.2 * s), (18.2 * s, 13.5 * s), (11.2 * s, 16.8 * s)]
+    return in_polygon(px, py, tri)
+
+
+def shape_discover(x, y):
+    """发现：指南针（外环 + 斜向指针，中心留孔）"""
+    s = SIZE / 27.0
+    px, py = x * s, y * s
+    ring = in_ring(px, py, 13.5 * s, 13.5 * s, 9.8 * s, 8.4 * s)
+    # 指针：端点 A/B 在对角线上，腰点沿法线 (1,1) 方向偏移，避免四点共线
+    needle = [
+        (17.6 * s, 9.4 * s),
+        (15.2 * s, 15.2 * s),
+        (9.4 * s, 17.6 * s),
+        (11.8 * s, 11.8 * s),
+    ]
+    body = in_polygon(px, py, needle) and not in_circle(px, py, 13.5 * s, 13.5 * s, 1.0 * s)
+    return ring or body
+
+
 def render(shape_fn, color):
     """按形状函数渲染一张图"""
     rows = []
@@ -200,7 +241,13 @@ def main():
     out = os.path.join(root, "tabbar")
     os.makedirs(out, exist_ok=True)
 
-    icons = {"home": shape_home, "snap": shape_moon, "me": shape_me}
+    icons = {
+        "home": shape_home,
+        "video": shape_video,
+        "discover": shape_discover,
+        "snap": shape_moon,
+        "me": shape_me,
+    }
     for name, fn in icons.items():
         write_png(os.path.join(out, f"{name}.png"), render(fn, GRAY), SIZE, SIZE)
         write_png(os.path.join(out, f"{name}-active.png"), render(fn, BLUE), SIZE, SIZE)

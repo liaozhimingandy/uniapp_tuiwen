@@ -15,6 +15,7 @@ import type {
   IPage,
   IPost,
   ISnap,
+  IVideoFeedPage,
 } from '@/types';
 
 /** 评论 / 点赞的 target_type：1 = 帖子（后端 Comment.TargetTypeEnum.POST） */
@@ -63,6 +64,9 @@ export const apiUrls = {
   snaps: () => '/snaps/',
   latestSnaps: () => '/snaps/latest/',
   likeSnap: (id: number) => `/snaps/${id}/like/`,
+
+  // 视频
+  videoFeed: () => '/videos/feed/',
 
   // 其它
   notices: () => '/notices/system/',
@@ -202,6 +206,33 @@ export const publishSnap = (payload: Record<string, unknown>): Promise<ISnap> =>
 
 /** 给心事点赞 */
 export const likeSnap = (id: number): Promise<{like_count?: number}> => http.post(apiUrls.likeSnap(id));
+
+// ------------------------------ 视频 ------------------------------
+
+/**
+ * 视频推荐流（游标分页，免登录）
+ *
+ * 后端 `/videos/feed/` 挂在公开路由组，未登录也能拉；
+ * 带着令牌请求时 interaction 会反映当前用户的互动状态（后端当前仍是占位值）。
+ *
+ * @param cursor  上一页返回的 next_cursor，首页传 null
+ * @param feedId  本次浏览的会话 ID（首页传 null，后续页沿用第一页返回的 feed_id）
+ * @param limit   每页条数，后端限制 1~20
+ */
+export const fetchVideoFeed = (
+  cursor: string | null = null,
+  feedId: string | null = null,
+  limit = 6,
+): Promise<IVideoFeedPage> =>
+  http.get<IVideoFeedPage>(apiUrls.videoFeed(), {
+    data: {
+      limit,
+      ...(cursor ? {cursor} : {}),
+      ...(feedId ? {feed_id: feedId} : {}),
+    },
+    // 视频页自己展示"加载失败/重试"，不需要全局 toast
+    hideError: true,
+  });
 
 // ------------------------------ 其它 ------------------------------
 

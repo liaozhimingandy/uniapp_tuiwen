@@ -86,6 +86,53 @@ export interface ISnap {
   created_at: string;
 }
 
+/** 视频作者（推荐流只透出必要展示字段） */
+export interface IVideoAuthor {
+  account_id: string;
+  nickname?: string | null;
+  avatar_url?: string | null;
+}
+
+/**
+ * 视频互动统计
+ *
+ * 后端当前未接入真实计数（VideoStats 注释即"占位默认值"），字段会返回 0；
+ * 页面因此不展示点赞/评论数字，避免显示一排假的 0。
+ */
+export interface IVideoStats {
+  view_count: number;
+  like_count: number;
+  comment_count: number;
+  share_count: number;
+}
+
+/** 推荐流单条视频 */
+export interface IVideoItem {
+  video_id: string;
+  poster_url?: string | null;
+  /** master playlist（m3u8），播放器据此自适应码率 */
+  play_url: string;
+  width?: number | null;
+  height?: number | null;
+  /** 时长（秒） */
+  duration?: number | null;
+  /** 0 未知 / 1 横屏 / 2 竖屏 */
+  orientation?: number | null;
+  title?: string | null;
+  description?: string | null;
+  author?: IVideoAuthor | null;
+  stats?: IVideoStats;
+  interaction?: {liked?: boolean; collected?: boolean; followed?: boolean};
+}
+
+/** 推荐流分页（游标分页，next_cursor 为空即到底） */
+export interface IVideoFeedPage {
+  feed_id: string;
+  items: IVideoItem[];
+  next_cursor?: string | null;
+  has_more: boolean;
+}
+
 /** 通知 / 公告 */
 export interface INotice {
   id: number;

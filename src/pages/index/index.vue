@@ -1,28 +1,23 @@
 <template>
   <view class="page">
-    <!-- 未登录：整页引导（首页是需要鉴权的信息流，空列表会让人以为没内容） -->
-    <view v-if="!accountStore.loggedIn" class="guest">
-      <image class="guest__logo" src="/static/logo.png" mode="aspectFit" />
-      <text class="guest__title">登录后查看动态</text>
-      <text class="guest__desc">关注的人发了什么，都在这里</text>
-      <view class="btn-primary guest__btn" @tap="goLogin">立即登录</view>
-      <text class="guest__link" @tap="goRegister">还没有账号？去注册</text>
+    <!-- 未登录提示条：仍能浏览公开推文，发帖/互动时再引导登录 -->
+    <view v-if="!accountStore.loggedIn" class="loginbar" @tap="goLogin">
+      <text class="loginbar__text">登录后可发布与互动</text>
+      <text class="loginbar__action">去登录 ›</text>
     </view>
 
-    <template v-else>
-      <!-- 新内容提示条：轮询发现新帖时浮在顶部，点一下插入列表 -->
-      <view v-if="pendingPosts.length" class="newbar" @tap="applyPending">
-        <text>{{ pendingPosts.length }} 条新内容，点击查看</text>
-      </view>
+    <!-- 新内容提示条：轮询发现新帖时浮在顶部，点一下插入列表 -->
+    <view v-if="pendingPosts.length" class="newbar" @tap="applyPending">
+      <text>{{ pendingPosts.length }} 条新内容，点击查看</text>
+    </view>
 
-      <view v-if="posts.length === 0 && !loading" class="empty">
-        <text>还没有内容，发一条试试</text>
-      </view>
+    <view v-if="posts.length === 0 && !loading" class="empty">
+      <text>还没有内容，发一条试试</text>
+    </view>
 
-      <PostCard v-for="item in posts" :key="item.post_id" :post="item" />
+    <PostCard v-for="item in posts" :key="item.post_id" :post="item" />
 
-      <LoadMore v-if="posts.length > 0" :status="loadStatus" @refresh="refresh" />
-    </template>
+    <LoadMore v-if="posts.length > 0" :status="loadStatus" @refresh="refresh" />
 
     <!-- 发帖入口（固定右下角，避开 tabBar） -->
     <view v-if="accountStore.loggedIn" class="fab" @tap="goPublish">
@@ -107,9 +102,9 @@ const loadMore = async () => {
   }
 };
 
-/** 拉最新（不打断当前列表） */
+/** 拉最新（不打断当前列表，未登录也能看公开推文，故不限制登录） */
 const checkLatest = async () => {
-  if (!accountStore.loggedIn || loading.value) return;
+  if (loading.value) return;
   try {
     const page = await fetchLatestPosts();
     const items = page.items ?? [];
@@ -147,7 +142,7 @@ const goPublish = () => {
 };
 
 onShow(() => {
-  if (!accountStore.loggedIn) return;
+  // 未登录也能展示公开推文：首屏加载、有内容后再轮询"新内容"提示条
   if (posts.value.length === 0) {
     void refresh(true);
     return;
@@ -156,10 +151,6 @@ onShow(() => {
 });
 
 onPullDownRefresh(() => {
-  if (!accountStore.loggedIn) {
-    uni.stopPullDownRefresh();
-    return;
-  }
   void refresh();
 });
 
@@ -175,39 +166,24 @@ onReachBottom(() => {
   padding-bottom: 24rpx;
 }
 
-.guest {
+.loginbar {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: 160rpx 48rpx;
+  justify-content: space-between;
+  margin: 16rpx 24rpx 0;
+  padding: 20rpx 28rpx;
+  border-radius: 16rpx;
+  background-color: $brand-light;
 }
 
-.guest__logo {
-  width: 140rpx;
-  height: 140rpx;
-  border-radius: 32rpx;
+.loginbar__text {
+  font-size: 26rpx;
+  color: $brand;
 }
 
-.guest__title {
-  margin-top: 32rpx;
-  font-size: 36rpx;
+.loginbar__action {
+  font-size: 26rpx;
   font-weight: 600;
-}
-
-.guest__desc {
-  margin-top: 12rpx;
-  font-size: 26rpx;
-  color: $text-3;
-}
-
-.guest__btn {
-  width: 400rpx;
-  margin-top: 56rpx;
-}
-
-.guest__link {
-  margin-top: 28rpx;
-  font-size: 26rpx;
   color: $brand;
 }
 

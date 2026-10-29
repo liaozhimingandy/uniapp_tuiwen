@@ -12,19 +12,36 @@
       }
     },
     {
-      "path": "pages/snap/snap",
+      "path": "pages/video/video",
       "style": {
-        "navigationBarTitleText": "天亮即焚",
-        "navigationBarBackgroundColor": "#141423",
-        "navigationBarTextStyle": "white",
-        "backgroundColor": "#141423",
-        "enablePullDownRefresh": true
+        "navigationBarTitleText": "视频",
+        "navigationStyle": "custom",
+        "backgroundColor": "#000000",
+        "disableScroll": true,
+        "enablePullDownRefresh": false
+      }
+    },
+    {
+      "path": "pages/discover/discover",
+      "style": {
+        "navigationBarTitleText": "发现",
+        "enablePullDownRefresh": false
       }
     },
     {
       "path": "pages/me/me",
       "style": {
         "navigationBarTitleText": "我的",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/snap/snap",
+      "style": {
+        "navigationBarTitleText": "天亮即焚",
+        "navigationBarBackgroundColor": "#141423",
+        "navigationBarTextStyle": "white",
+        "backgroundColor": "#141423",
         "enablePullDownRefresh": true
       }
     },
@@ -108,14 +125,20 @@
         "selectedIconPath": "static/tabbar/home-active.png"
       },
       {
-        "pagePath": "pages/snap/snap",
-        "text": "树洞",
-        "iconPath": "static/tabbar/snap.png",
-        "selectedIconPath": "static/tabbar/snap-active.png"
+        "pagePath": "pages/video/video",
+        "text": "视频",
+        "iconPath": "static/tabbar/video.png",
+        "selectedIconPath": "static/tabbar/video-active.png"
+      },
+      {
+        "pagePath": "pages/discover/discover",
+        "text": "发现",
+        "iconPath": "static/tabbar/discover.png",
+        "selectedIconPath": "static/tabbar/discover-active.png"
       },
       {
         "pagePath": "pages/me/me",
-        "text": "我的",
+        "text": "我",
         "iconPath": "static/tabbar/me.png",
         "selectedIconPath": "static/tabbar/me-active.png"
       }
