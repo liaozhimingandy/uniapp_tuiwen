@@ -35,7 +35,7 @@
       @change="onChange"
     >
       <swiper-item v-for="(item, idx) in items" :key="item.video_id">
-        <view class="slide" @tap="onSlideTap">
+        <view class="slide" @tap="onSlideTap" @touchstart="showProgress">
           <!-- 海报垫底，避免视频未起播时黑屏 -->
           <image
             v-if="item.poster_url"
@@ -144,16 +144,17 @@
             <text class="meta__author">@{{ item.author?.nickname || '匿名' }}</text>
           </view>
 
-          <!-- 底部播放进度条(仅当前屏渲染): 拖拽时显示目标时间气泡 -->
+          <!-- 底部播放进度条(仅当前屏渲染): 默认播放 3s 后隐藏, 触摸视频唤起;
+               拖拽时显示目标时间气泡, 贴两端时改为端对齐避免文字被裁 -->
           <view
-            v-if="idx === current && duration > 0"
+            v-if="idx === current && duration > 0 && progressVisible"
             class="progress"
             @tap.stop
             @touchstart.stop="onSeekStart"
             @touchmove.stop.prevent="onSeekMove"
             @touchend.stop="onSeekEnd"
           >
-            <view v-if="dragging" class="progress__bubble" :style="{left: (displayProgress * 100) + '%'}">
+            <view v-if="dragging" class="progress__bubble" :style="bubbleStyle">
               <text>{{ fmtTime(displayTime) }}</text>
             </view>
             <view class="progress__track">
@@ -363,9 +364,34 @@ const setupHls = (idx: number, el: HTMLVideoElement) => {
 
 const onPlay = () => {
   playing.value = true;
+  showProgress(); // 起播即显示, 3s 后自动隐藏
 };
 const onPause = () => {
   playing.value = false;
+  cancelProgressHide(); // 暂停时常显, 播放再计时
+};
+
+// ----------------------------- 进度条显隐（播放 3s 后隐藏, 触摸唤起） -----------------------------
+
+const progressVisible = ref(false);
+let progressTimer: ReturnType<typeof setTimeout> | null = null;
+
+const cancelProgressHide = () => {
+  if (progressTimer) {
+    clearTimeout(progressTimer);
+    progressTimer = null;
+  }
+};
+
+/** 显示进度条; 正在播放时 3s 后自动隐藏(拖拽中不隐藏) */
+const showProgress = () => {
+  progressVisible.value = true;
+  cancelProgressHide();
+  if (!playing.value) return;
+  progressTimer = setTimeout(() => {
+    progressTimer = null;
+    if (!dragging.value) progressVisible.value = false;
+  }, 3000);
 };
 
 // ----------------------------- 播放进度条（时间 + 拖拽 seek） -----------------------------
@@ -384,6 +410,15 @@ const displayProgress = computed(() => {
 });
 
 const displayTime = computed(() => (dragging.value ? dragRatio.value * duration.value : currentTime.value));
+
+/** 拖拽气泡定位: 中段跟随圆点居中, 贴两端改端对齐, 避免文字溢出屏幕被裁 */
+const bubbleStyle = computed(() => {
+  const p = Math.min(Math.max(displayProgress.value, 0), 1);
+  let translate = '-50%';
+  if (p < 0.08) translate = '0%';
+  else if (p > 0.92) translate = '-100%';
+  return {left: (p * 100) + '%', transform: `translateX(${translate})`};
+});
 
 const onTimeUpdate = (e: any) => {
   // #ifdef H5
@@ -418,6 +453,7 @@ const updateDrag = (e: any) => {
 const onSeekStart = (e: any) => {
   if (!(duration.value > 0)) return;
   dragging.value = true;
+  cancelProgressHide(); // 拖拽期间常显
   updateDrag(e);
 };
 
@@ -429,6 +465,7 @@ const onSeekEnd = () => {
   if (!dragging.value) return;
   const ratio = dragRatio.value;
   dragging.value = false;
+  showProgress(); // 松手后重新计时隐藏
   const target = ratio * duration.value;
   currentTime.value = target; // 先回显, 等 timeupdate 接管
   const player = getPlayer(current.value);
@@ -491,6 +528,7 @@ const onChange = (e: {detail: {current: number}}) => {
   current.value = e.detail.current;
   currentTime.value = 0; // 切屏重置进度条
   duration.value = 0;
+  cancelProgressHide();
   playIdx(current.value);
   if (hasMore.value && !loading.value && current.value >= items.value.length - 2) {
     void loadMore();
@@ -796,6 +834,7 @@ onLoad(() => {
 onUnload(() => {
   if (heartTimer) clearTimeout(heartTimer);
   if (tapPending) clearTimeout(tapPending);
+  cancelProgressHide();
   // #ifdef H5
   hlsMap.forEach((hls) => hls.destroy());
   hlsMap.clear();
@@ -917,7 +956,7 @@ onUnload(() => {
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
-/* 底部播放进度条: 轨道 + 拖拽圆点 + 拖拽时间气泡 */
+/* 底部播放进度条: 轨道 + 拖拽圆点 + 拖拽时间气泡; 唤起时淡入 */
 .progress {
   position: absolute;
   left: 0;
@@ -925,6 +964,16 @@ onUnload(() => {
   bottom: 44rpx;
   padding: 20rpx 0;
   z-index: 6;
+  animation: progress-fadein 0.25s ease-out;
+}
+
+@keyframes progress-fadein {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .progress__track {
@@ -960,7 +1009,8 @@ onUnload(() => {
   transform: scale(1.35);
 }
 
-/* 拖拽时圆点上方的时间气泡(translateX(-50%) 居中跟随) */
+/* 拖拽时圆点上方的时间气泡(跟随位置与对齐由 bubbleStyle 内联控制:
+   中段 translateX(-50%) 居中, 贴两端 0% / -100% 端对齐防文字被裁) */
 .progress__bubble {
   position: absolute;
   bottom: 34rpx;
@@ -969,7 +1019,6 @@ onUnload(() => {
   background-color: rgba(0, 0, 0, 0.7);
   color: #ffffff;
   font-size: 24rpx;
-  transform: translateX(-50%);
   white-space: nowrap;
   pointer-events: none;
 }
