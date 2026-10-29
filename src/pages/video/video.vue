@@ -40,6 +40,7 @@
           <image
             v-if="item.poster_url"
             class="poster"
+            :class="{'player--rotated': isRotated(item)}"
             :src="staticLink(item.poster_url)"
             mode="aspectFill"
           />
@@ -50,6 +51,7 @@
             :is="NativeVideo"
             :id="'hv' + idx"
             class="player"
+            :class="{'player--rotated': isRotated(item)}"
             :muted="!soundOn"
             :loop="true"
             playsinline
@@ -57,12 +59,14 @@
             x5-playsinline
             @play="onPlay"
             @pause="onPause"
+            @timeupdate="onTimeUpdate"
           />
           <!-- #endif -->
           <!-- #ifndef H5 -->
           <video
             :id="'uv' + idx"
             class="player"
+            :class="{'player--rotated': isRotated(item)}"
             :src="staticLink(item.play_url)"
             :autoplay="idx === current"
             :loop="true"
@@ -71,6 +75,7 @@
             object-fit="cover"
             @play="onPlay"
             @pause="onPause"
+            @timeupdate="onTimeUpdate"
           />
           <!-- #endif -->
 
@@ -112,10 +117,16 @@
               <text class="side__num">{{ formatCount(item.stats?.comment_count) }}</text>
             </view>
 
-            <!-- 收藏（/favorites/ target_type=2） -->
+            <!-- 收藏（/favorites/ target_type=2）★☆ 是文本字符靠 color 上色 -->
             <view class="side__btn" @tap.stop="toggleCollect(item)">
-              <text class="side__icon" :class="{'side__icon--on': item.interaction?.collected}">{{ item.interaction?.collected ? '⭐' : '☆' }}</text>
+              <text class="side__icon" :class="{'side__icon--on': item.interaction?.collected}">{{ item.interaction?.collected ? '★' : '☆' }}</text>
               <text class="side__num">{{ formatCount(item.stats?.favorite_count) }}</text>
+            </view>
+
+            <!-- 旋转（横屏/未知方向的视频可手动转 90° 铺满竖屏） -->
+            <view v-if="item.orientation !== 2" class="side__btn" @tap.stop="toggleRotate(item)">
+              <text class="side__icon" :class="{'side__icon--on': isRotated(item)}">⟳</text>
+              <text class="side__num">{{ isRotated(item) ? '还原' : '旋转' }}</text>
             </view>
 
             <!-- 分享 -->
@@ -130,6 +141,11 @@
             <text v-if="item.title" class="meta__title">{{ item.title }}</text>
             <text v-if="item.description" class="meta__desc">{{ item.description }}</text>
             <text class="meta__author">@{{ item.author?.nickname || '匿名' }}</text>
+          </view>
+
+          <!-- 底部播放进度条(仅当前屏渲染) -->
+          <view v-if="idx === current" class="progress">
+            <view class="progress__bar" :style="{width: (progress * 100) + '%'}" />
           </view>
         </view>
       </swiper-item>
@@ -328,6 +344,42 @@ const onPause = () => {
   playing.value = false;
 };
 
+// ----------------------------- 播放进度条 -----------------------------
+
+/** 当前屏播放进度(0-1), timeupdate 驱动 */
+const progress = ref(0);
+
+const onTimeUpdate = (e: any) => {
+  // #ifdef H5
+  const el = e?.target as HTMLVideoElement | undefined;
+  // 只跟随当前屏的播放器, 预取/邻屏的时间更新不刷进度
+  if (!el || el !== getPlayer(current.value)) return;
+  const d = el.duration;
+  if (d && isFinite(d) && d > 0) progress.value = el.currentTime / d;
+  // #endif
+  // #ifndef H5
+  const d2 = Number(e?.detail?.duration);
+  if (d2 > 0) progress.value = Number(e.detail.currentTime) / d2;
+  // #endif
+};
+
+// ----------------------------- 横屏视频旋转 -----------------------------
+
+/** 手动旋转了 90° 的视频集合(按 video_id 记录, 跨 slide 互不影响) */
+const rotatedIds = ref(new Set<string>());
+
+const isRotated = (item: IVideoItem): boolean => rotatedIds.value.has(item.video_id);
+
+const toggleRotate = (item: IVideoItem) => {
+  const next = new Set(rotatedIds.value);
+  if (next.has(item.video_id)) {
+    next.delete(item.video_id);
+  } else {
+    next.add(item.video_id);
+  }
+  rotatedIds.value = next;
+};
+
 const togglePlay = () => {
   const player = getPlayer(current.value);
   if (!player) return;
@@ -355,6 +407,7 @@ const toggleSound = () => {
 
 const onChange = (e: {detail: {current: number}}) => {
   current.value = e.detail.current;
+  progress.value = 0; // 切屏重置进度条
   playIdx(current.value);
   if (hasMore.value && !loading.value && current.value >= items.value.length - 2) {
     void loadMore();
@@ -735,6 +788,35 @@ onUnload(() => {
   object-fit: cover;
 }
 
+/* 横屏视频手动旋转 90°: 宽高对调后居中铺满竖屏 */
+.poster--rotated,
+.player--rotated {
+  width: 100vh;
+  height: 100vw;
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+/* 底部播放进度条 */
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6rpx;
+  background-color: rgba(255, 255, 255, 0.2);
+  z-index: 5;
+}
+
+.progress__bar {
+  height: 100%;
+  background-color: #fe2c55;
+  transition: width 0.2s linear;
+}
+
 /* H5 端 <video> 被编译成 uni-video 组件, 尺寸样式落在宿主上,
    内部真实的 video 元素需要撑满宿主 */
 .player:deep(video) {
@@ -830,6 +912,8 @@ onUnload(() => {
 }
 
 .side__icon {
+  /* ★☆⟳↗ 是文本字符, 白色才在黑背景上可见; emoji 不受 color 影响 */
+  color: #ffffff;
   font-size: 52rpx;
   line-height: 1;
   filter: drop-shadow(0 2rpx 6rpx rgba(0, 0, 0, 0.4));
