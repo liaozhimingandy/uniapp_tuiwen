@@ -45,6 +45,7 @@ export const apiUrls = {
   latestPosts: () => '/posts/latest/',
   sharePost: (postId: string) => `/posts/s/${postId}/`,
   searchPost: (keyword: string) => `/posts/search/${encodeURIComponent(keyword)}/`,
+  hotPosts: () => '/posts/hot/',
 
   // 评论
   comments: (postId: string) => `/comments/${COMMENT_TARGET_POST}/${postId}/`,
@@ -194,8 +195,17 @@ export const publishPost = (payload: Record<string, unknown>): Promise<IPost> =>
 /** 删除自己的帖子 */
 export const deletePost = (postId: string): Promise<unknown> => http.del(apiUrls.post(postId));
 
-/** 搜索帖子（后端未实现时 404，调用方降级为"暂无结果"） */
+/** 搜索帖子（后端已实现 content 文本模糊匹配，未命中返回空列表） */
 export const searchPosts = (keyword: string): Promise<IPage<IPost>> => http.get(apiUrls.searchPost(keyword));
+
+/**
+ * 热门帖子（免登录）
+ *
+ * 最近 7 天的公开帖按点赞数倒序，只返回有过点赞的内容；
+ * 发现页/搜索页的「热门内容」数据源。
+ */
+export const fetchHotPosts = (limit = 5): Promise<IPage<IPost>> =>
+  http.get(apiUrls.hotPosts(), {data: {limit, days: 7}, hideError: true});
 
 // ------------------------------ 评论 / 点赞 ------------------------------
 

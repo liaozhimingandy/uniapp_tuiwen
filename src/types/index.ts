@@ -26,6 +26,8 @@ export interface IPost {
   is_top?: boolean | null;
   created_at: string;
   updated_at?: string;
+  /** 点赞数（/posts/hot/ 的 HotPostItem 会返回，普通列表接口不带） */
+  like_count?: number;
   [key: string]: unknown;
 }
 

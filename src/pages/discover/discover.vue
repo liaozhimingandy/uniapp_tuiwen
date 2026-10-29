@@ -1,31 +1,60 @@
 <template>
   <view class="page">
-    <view class="header">
-      <text class="header__title">发现</text>
-    </view>
-
-    <!-- 搜索入口 -->
+    <!-- 顶部搜索条（微信发现页同款位置） -->
     <view class="searchbar" @tap="goSearch">
       <text class="searchbar__icon">🔍</text>
       <text class="searchbar__ph">搜索用户、内容</text>
     </view>
 
-    <!-- 功能宫格：树洞作为二级入口收在这里 -->
-    <view class="grid">
+    <!-- 入口分组：微信「发现」页样式 —— 白底列表行 + 圆角图标 + 右箭头 -->
+    <view class="group">
+      <view class="cell" @tap="goVideo">
+        <view class="cell__icon cell__icon--video">📺</view>
+        <text class="cell__label">视频号</text>
+        <text class="cell__arrow">›</text>
+      </view>
       <view class="cell" @tap="goSnap">
         <view class="cell__icon cell__icon--snap">🌙</view>
         <text class="cell__label">树洞</text>
         <text class="cell__sub">天亮即焚</text>
+        <text class="cell__arrow">›</text>
+      </view>
+    </view>
+
+    <view class="group">
+      <view class="cell" @tap="goNotice">
+        <view class="cell__icon cell__icon--notice">🔔</view>
+        <text class="cell__label">通知中心</text>
+        <text v-if="unreadCount > 0" class="cell__badge">{{ unreadBadge }}</text>
+        <text class="cell__arrow">›</text>
       </view>
       <view class="cell" @tap="goFollow">
         <view class="cell__icon cell__icon--follow">👥</view>
-        <text class="cell__label">关注</text>
-        <text class="cell__sub">我关注的人</text>
+        <text class="cell__label">我的关注</text>
+        <text class="cell__arrow">›</text>
       </view>
-      <view class="cell" @tap="goMine">
-        <view class="cell__icon cell__icon--me">👤</view>
-        <text class="cell__label">我的</text>
-        <text class="cell__sub">主页与设置</text>
+    </view>
+
+    <!-- 热门内容：最近 7 天点赞最多的公开帖 -->
+    <view v-if="hotPosts.length" class="block">
+      <view class="block__head">
+        <text class="block__title">热门内容</text>
+        <text class="block__sub">近 7 天</text>
+      </view>
+      <view
+        v-for="(item, index) in hotPosts"
+        :key="item.post_id"
+        class="hot"
+        @tap="goDetail(item.post_id)"
+      >
+        <text class="hot__rank" :class="{'hot__rank--top': index < 3}">{{ index + 1 }}</text>
+        <view class="hot__main">
+          <text class="hot__text">{{ hotSummary(item) }}</text>
+          <view class="hot__meta">
+            <text class="hot__author">{{ hotAuthor(item.account_id) }}</text>
+            <text class="hot__likes">❤ {{ formatCount(item.like_count) }}</text>
+          </view>
+        </view>
       </view>
     </view>
 
@@ -55,30 +84,41 @@
 
 <script setup lang="ts">
 /**
- * 发现（二级入口聚合页）
+ * 发现（微信风格二级入口聚合页）
  *
- * 把"树洞 / 天亮即焚"从底部 Tab 收进这里，作为二级入口；
- * 同页还聚合了搜索、关注、我的、系统公告，避免散落。
+ * 版式对齐微信「发现」页：顶部搜索条 + 白底分组列表行（图标/标题/箭头），
+ * 树洞、视频号等二级入口收在这里；下方叠加热门内容与系统公告。
  */
 import {computed, ref} from 'vue';
 import {onShow} from '@dcloudio/uni-app';
-import {fetchNotices} from '@/api';
+import {fetchHotPosts, fetchNotices, fetchUnreadCount} from '@/api';
 import {formatSmartTime} from '@/utils/datetime';
-import {useAccountStore} from '@/stores/account';
+import {contentText, formatCount, stripHtml} from '@/utils/text';
+import {useAccountStore, useUserCacheStore} from '@/stores/account';
 import {getNotificationSettings} from '@/utils/notification';
 import {LOGIN_PAGE, toast} from '@/api/request';
-import type {IContent, INotice} from '@/types';
+import type {IContent, INotice, IPost} from '@/types';
 
 const accountStore = useAccountStore();
+const userCacheStore = useUserCacheStore();
 
+const hotPosts = ref<IPost[]>([]);
 const notices = ref<INotice[]>([]);
 const noticeLoading = ref(false);
+const unreadCount = ref(0);
 /** 是否展示系统公告：受通知设置控制 */
 const showNotice = computed(() => getNotificationSettings().systemNotice);
 
+/** 未读数超过 99 显示 99+ */
+const unreadBadge = computed(() => (unreadCount.value > 99 ? '99+' : String(unreadCount.value)));
+
 const goSearch = () => uni.navigateTo({url: '/pages/search/search'});
 const goSnap = () => uni.navigateTo({url: '/pages/snap/snap'});
-const goMine = () => uni.switchTab({url: '/pages/me/me'});
+const goNotice = () => uni.navigateTo({url: '/pages/notice/notice'});
+/** 视频是 tabBar 页面，必须用 switchTab */
+const goVideo = () => uni.switchTab({url: '/pages/video/video'});
+
+const goDetail = (postId: string) => uni.navigateTo({url: `/pages/detail/detail?id=${postId}`});
 
 /** 关注列表需要登录态（要自己的 account_id），未登录跳登录页 */
 const goFollow = () => {
@@ -94,12 +134,38 @@ const goFollow = () => {
   uni.navigateTo({url: `/pages/follow/follow?id=${id}&tab=followee`});
 };
 
+/** 热门条目摘要：HTML 去标签 + 截两行（CSS clamp），纯图帖给占位文案 */
+const hotSummary = (post: IPost): string => {
+  const text = stripHtml(contentText(post.content));
+  return text || '分享了几张图片';
+};
+
+/** 热门条目作者名：走用户缓存（同一作者只请求一次），未加载完先显示占位 */
+const hotAuthor = (accountId: string): string => {
+  const author = userCacheStore.accountMap[accountId];
+  if (!author) {
+    void userCacheStore.fetchUser(accountId).catch(() => undefined);
+    return '…';
+  }
+  return author.nickname || author.username || '匿名用户';
+};
+
 /** 公告正文：后端 content 是 {text}，兼容直接给字符串的情况 */
 const noticeText = (n: INotice): string => {
   const c = n.content as IContent | string | undefined;
   if (!c) return '';
   if (typeof c === 'string') return c;
   return c.text || '';
+};
+
+const loadHotPosts = async () => {
+  try {
+    const page = await fetchHotPosts(5);
+    hotPosts.value = (page.items ?? []) as IPost[];
+  } catch {
+    // 热门失败不影响发现页主体，直接隐藏区块
+    hotPosts.value = [];
+  }
 };
 
 const loadNotices = async () => {
@@ -115,7 +181,24 @@ const loadNotices = async () => {
   }
 };
 
+/** 未读通知数（需登录，失败静默 —— 红点只是辅助提示） */
+const loadUnread = async () => {
+  const id = accountStore.account.account_id;
+  if (!accountStore.loggedIn || !id) {
+    unreadCount.value = 0;
+    return;
+  }
+  try {
+    const res = await fetchUnreadCount(id);
+    unreadCount.value = res.count ?? 0;
+  } catch {
+    unreadCount.value = 0;
+  }
+};
+
 onShow(() => {
+  void loadHotPosts();
+  void loadUnread();
   // 关闭「系统公告」开关则不拉取，省一次请求
   if (getNotificationSettings().systemNotice) {
     void loadNotices();
@@ -130,23 +213,14 @@ onShow(() => {
   padding-bottom: calc(32rpx + env(safe-area-inset-bottom));
 }
 
-.header {
-  padding: 28rpx 32rpx 8rpx;
-}
-
-.header__title {
-  font-size: 44rpx;
-  font-weight: 700;
-  color: $text-1;
-}
-
+/* ---------------- 顶部搜索条 ---------------- */
 .searchbar {
   display: flex;
   align-items: center;
-  margin: 16rpx 24rpx 8rpx;
+  margin: 20rpx 24rpx 24rpx;
   padding: 0 24rpx;
-  height: 72rpx;
-  border-radius: 36rpx;
+  height: 76rpx;
+  border-radius: 40rpx;
   background-color: $bg-card;
 }
 
@@ -160,58 +234,93 @@ onShow(() => {
   color: $text-3;
 }
 
-.grid {
-  display: flex;
-  margin: 20rpx 24rpx;
-  padding: 24rpx 0;
+/* ---------------- 微信风格分组列表 ---------------- */
+.group {
+  margin: 0 24rpx 24rpx;
   border-radius: 20rpx;
   background-color: $bg-card;
+  overflow: hidden;
 }
 
 .cell {
-  flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
+  padding: 26rpx 32rpx;
+  border-bottom: 1rpx solid $border;
+}
+
+.cell:last-child {
+  border-bottom: none;
 }
 
 .cell__icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 96rpx;
-  height: 96rpx;
-  border-radius: 28rpx;
-  font-size: 44rpx;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 18rpx;
+  margin-right: 24rpx;
+  font-size: 36rpx;
+  flex-shrink: 0;
+}
+
+.cell__icon--video {
+  background-color: rgba(255, 90, 90, 0.12);
 }
 
 .cell__icon--snap {
   background-color: rgba(2, 122, 255, 0.12);
 }
 
+.cell__icon--notice {
+  background-color: rgba(255, 170, 0, 0.14);
+}
+
 .cell__icon--follow {
   background-color: rgba(124, 92, 255, 0.12);
 }
 
-.cell__icon--me {
-  background-color: rgba(255, 138, 0, 0.12);
-}
-
 .cell__label {
-  margin-top: 14rpx;
-  font-size: 27rpx;
+  font-size: 29rpx;
   font-weight: 500;
   color: $text-1;
 }
 
 .cell__sub {
-  margin-top: 4rpx;
-  font-size: 21rpx;
+  margin-left: 14rpx;
+  font-size: 22rpx;
   color: $text-3;
 }
 
+.cell__badge {
+  margin-left: auto;
+  min-width: 34rpx;
+  padding: 0 10rpx;
+  height: 34rpx;
+  line-height: 34rpx;
+  border-radius: 17rpx;
+  background-color: #fa5151;
+  font-size: 20rpx;
+  color: #ffffff;
+  text-align: center;
+}
+
+.cell__arrow {
+  margin-left: auto;
+  font-size: 36rpx;
+  color: #c8c9cc;
+  line-height: 1;
+}
+
+/* badge 和 arrow 同时存在时，badge 顶掉 margin-left:auto */
+.cell__badge + .cell__arrow {
+  margin-left: 12rpx;
+}
+
+/* ---------------- 内容区块（热门/公告共用） ---------------- */
 .block {
-  margin: 12rpx 24rpx;
+  margin: 0 24rpx 24rpx;
   border-radius: 20rpx;
   background-color: $bg-card;
   overflow: hidden;
@@ -230,6 +339,11 @@ onShow(() => {
   color: $text-1;
 }
 
+.block__sub {
+  font-size: 22rpx;
+  color: $text-3;
+}
+
 .block__tip {
   font-size: 24rpx;
   color: $text-3;
@@ -242,6 +356,66 @@ onShow(() => {
   color: $text-3;
 }
 
+/* ---------------- 热门内容条目 ---------------- */
+.hot {
+  display: flex;
+  align-items: flex-start;
+  padding: 24rpx 32rpx;
+  border-top: 1rpx solid $border;
+}
+
+.hot__rank {
+  width: 44rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  font-style: italic;
+  color: $text-3;
+  flex-shrink: 0;
+}
+
+.hot__rank--top {
+  color: #ff7a45;
+}
+
+.hot__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.hot__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 27rpx;
+  line-height: 1.5;
+  color: $text-1;
+  word-break: break-all;
+}
+
+.hot__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10rpx;
+}
+
+.hot__author {
+  font-size: 22rpx;
+  color: $text-3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hot__likes {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  font-size: 22rpx;
+  color: #ff7a45;
+}
+
+/* ---------------- 公告条目 ---------------- */
 .notice {
   padding: 24rpx 32rpx;
   border-top: 1rpx solid $border;

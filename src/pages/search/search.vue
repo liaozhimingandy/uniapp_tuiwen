@@ -17,6 +17,29 @@
       <text class="searchbar__btn" @tap="doSearch">搜索</text>
     </view>
 
+    <!-- 热门内容（默认态：搜索历史下方） -->
+    <view v-if="!searched && hotPosts.length" class="hot-block">
+      <view class="hot-block__head">
+        <text class="hot-block__title">热门内容</text>
+        <text class="hot-block__sub">近 7 天</text>
+      </view>
+      <view
+        v-for="(item, index) in hotPosts"
+        :key="item.post_id"
+        class="hot-row"
+        @tap="goDetail(item.post_id)"
+      >
+        <text class="hot-row__rank" :class="{'hot-row__rank--top': index < 3}">{{ index + 1 }}</text>
+        <view class="hot-row__main">
+          <text class="hot-row__text">{{ hotSummary(item) }}</text>
+          <view class="hot-row__meta">
+            <text class="hot-row__author">{{ hotAuthor(item.account_id) }}</text>
+            <text class="hot-row__likes">❤ {{ formatCount(item.like_count) }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
     <!-- 历史记录 -->
     <view v-if="!searched && history.length" class="history">
       <view class="history__head">
@@ -76,22 +99,52 @@ import {ref} from 'vue';
 import {onLoad} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
 import PostCard from '@/components/PostCard.vue';
-import {searchAccounts, searchPosts} from '@/api';
+import {searchAccounts, searchPosts, fetchHotPosts} from '@/api';
 import {getItem, setItem} from '@/utils/storage';
+import {contentText, formatCount, stripHtml} from '@/utils/text';
+import {useUserCacheStore} from '@/stores/account';
 import {toast} from '@/api/request';
 import type {IAccount, IPost} from '@/types';
 
 const HISTORY_KEY = 'tw_search_history';
 
+const userCacheStore = useUserCacheStore();
+
 const keyword = ref('');
 const tab = ref<'user' | 'post'>('user');
 const users = ref<IAccount[]>([]);
 const posts = ref<IPost[]>([]);
+const hotPosts = ref<IPost[]>([]);
 const loading = ref(false);
 const searched = ref(false);
 const autoFocus = ref(false);
 
 const history = ref<string[]>(getItem<string[]>(HISTORY_KEY, []));
+
+/** 热门条目摘要：HTML 去标签，纯图帖给占位文案 */
+const hotSummary = (post: IPost): string => stripHtml(contentText(post.content)) || '分享了几张图片';
+
+/** 热门条目作者名：走用户缓存（同一作者只请求一次） */
+const hotAuthor = (accountId: string): string => {
+  const author = userCacheStore.accountMap[accountId];
+  if (!author) {
+    void userCacheStore.fetchUser(accountId).catch(() => undefined);
+    return '…';
+  }
+  return author.nickname || author.username || '匿名用户';
+};
+
+const goDetail = (postId: string) => uni.navigateTo({url: `/pages/detail/detail?id=${postId}`});
+
+/** 拉热门内容（失败静默，区块隐藏即可） */
+const loadHotPosts = async () => {
+  try {
+    const page = await fetchHotPosts(5);
+    hotPosts.value = (page.items ?? []) as IPost[];
+  } catch {
+    hotPosts.value = [];
+  }
+};
 
 /** 写入搜索历史（去重，最多 10 条） */
 const pushHistory = (word: string) => {
@@ -160,6 +213,8 @@ onLoad((options) => {
     void doSearch();
     return;
   }
+  // 默认态拉一次热门内容
+  void loadHotPosts();
   autoFocus.value = true;
 });
 </script>
@@ -212,6 +267,93 @@ onLoad((options) => {
   margin-top: 20rpx;
   padding: 24rpx;
   background-color: $bg-card;
+}
+
+/* ---------------- 热门内容 ---------------- */
+.hot-block {
+  margin-top: 20rpx;
+  background-color: $bg-card;
+  overflow: hidden;
+}
+
+.hot-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 28rpx 24rpx 8rpx;
+}
+
+.hot-block__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: $text-1;
+}
+
+.hot-block__sub {
+  font-size: 22rpx;
+  color: $text-3;
+}
+
+.hot-row {
+  display: flex;
+  align-items: flex-start;
+  padding: 22rpx 24rpx;
+  border-top: 1rpx solid $border;
+}
+
+.hot-row:first-of-type {
+  border-top: none;
+}
+
+.hot-row__rank {
+  width: 44rpx;
+  font-size: 30rpx;
+  font-weight: 700;
+  font-style: italic;
+  color: $text-3;
+  flex-shrink: 0;
+}
+
+.hot-row__rank--top {
+  color: #ff7a45;
+}
+
+.hot-row__main {
+  flex: 1;
+  min-width: 0;
+}
+
+.hot-row__text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 27rpx;
+  line-height: 1.5;
+  color: $text-1;
+  word-break: break-all;
+}
+
+.hot-row__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8rpx;
+}
+
+.hot-row__author {
+  font-size: 22rpx;
+  color: $text-3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hot-row__likes {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  font-size: 22rpx;
+  color: #ff7a45;
 }
 
 .history__head {
