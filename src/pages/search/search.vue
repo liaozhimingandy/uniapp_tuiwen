@@ -47,7 +47,10 @@
         <text class="history__clear" @tap="clearHistory">清空</text>
       </view>
       <view class="history__tags">
-        <text v-for="item in history" :key="item" class="tag" @tap="useHistory(item)">{{ item }}</text>
+        <view v-for="item in history" :key="item" class="tag">
+          <text class="tag__text" @tap="useHistory(item)">{{ item }}</text>
+          <text class="tag__del" @tap.stop="removeHistory(item)">×</text>
+        </view>
       </view>
     </view>
 
@@ -75,6 +78,8 @@
             <text class="user-row__id ellipsis">@{{ item.username || item.account_id }}</text>
           </view>
         </view>
+        <view v-if="userHasMore" class="loadmore">{{ loadingMore ? '加载中…' : '上拉加载更多' }}</view>
+        <view v-else-if="users.length > 0" class="loadmore">没有更多用户了</view>
       </template>
 
       <!-- 内容结果 -->
@@ -82,6 +87,8 @@
         <view v-if="loading" class="empty">搜索中…</view>
         <view v-else-if="posts.length === 0" class="empty">没有找到相关内容</view>
         <PostCard v-for="item in posts" :key="item.post_id" :post="item" />
+        <view v-if="postHasMore" class="loadmore">{{ loadingMore ? '加载中…' : '上拉加载更多' }}</view>
+        <view v-else-if="posts.length > 0" class="loadmore">没有更多内容了</view>
       </template>
     </template>
   </view>
@@ -96,7 +103,7 @@
  * 处理并给出提示，而不是弹一个刺眼的 404 错误（用户会以为是自己网断了）。
  */
 import {ref} from 'vue';
-import {onLoad} from '@dcloudio/uni-app';
+import {onLoad, onReachBottom} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
 import PostCard from '@/components/PostCard.vue';
 import {searchAccounts, searchPosts, fetchHotPosts} from '@/api';
@@ -107,6 +114,8 @@ import {toast} from '@/api/request';
 import type {IAccount, IPost} from '@/types';
 
 const HISTORY_KEY = 'tw_search_history';
+/** 每页条数（用户/内容搜索一致，返回不足一页即认为没有更多） */
+const PAGE_SIZE = 20;
 
 const userCacheStore = useUserCacheStore();
 
@@ -118,6 +127,13 @@ const hotPosts = ref<IPost[]>([]);
 const loading = ref(false);
 const searched = ref(false);
 const autoFocus = ref(false);
+
+/** 分页状态：offset 翻页（用户/内容各自独立） */
+const userOffset = ref(0);
+const postOffset = ref(0);
+const userHasMore = ref(false);
+const postHasMore = ref(false);
+const loadingMore = ref(false);
 
 const history = ref<string[]>(getItem<string[]>(HISTORY_KEY, []));
 
@@ -153,6 +169,12 @@ const pushHistory = (word: string) => {
   setItem(HISTORY_KEY, next);
 };
 
+/** 删除单条搜索历史 */
+const removeHistory = (word: string) => {
+  history.value = history.value.filter((item) => item !== word);
+  setItem(HISTORY_KEY, history.value);
+};
+
 const clearHistory = () => {
   history.value = [];
   setItem(HISTORY_KEY, []);
@@ -168,9 +190,13 @@ const clearKeyword = () => {
   searched.value = false;
   users.value = [];
   posts.value = [];
+  userOffset.value = 0;
+  postOffset.value = 0;
+  userHasMore.value = false;
+  postHasMore.value = false;
 };
 
-/** 执行搜索：两个接口并发，任一失败不影响另一个 */
+/** 执行搜索：两个接口并发拉第一页，任一失败不影响另一个 */
 const doSearch = async () => {
   const word = keyword.value.trim();
   if (!word) {
@@ -180,11 +206,17 @@ const doSearch = async () => {
   pushHistory(word);
   loading.value = true;
   searched.value = true;
+  userOffset.value = 0;
+  postOffset.value = 0;
 
-  const [userResult, postResult] = await Promise.allSettled([searchAccounts(word, 0, 20), searchPosts(word)]);
+  const [userResult, postResult] = await Promise.allSettled([searchAccounts(word, 0, PAGE_SIZE), searchPosts(word, 0, PAGE_SIZE)]);
 
-  users.value = userResult.status === 'fulfilled' ? (userResult.value?.items ?? []) : [];
-  posts.value = postResult.status === 'fulfilled' ? (postResult.value?.items ?? []) : [];
+  const userItems = userResult.status === 'fulfilled' ? (userResult.value?.items ?? []) : [];
+  const postItems = postResult.status === 'fulfilled' ? (postResult.value?.items ?? []) : [];
+  users.value = userItems;
+  posts.value = postItems;
+  userHasMore.value = userItems.length >= PAGE_SIZE;
+  postHasMore.value = postItems.length >= PAGE_SIZE;
 
   // 两个都没结果且用户搜索失败：多半是网络/接口问题，给一次提示
   if (userResult.status === 'rejected' && postResult.status === 'rejected') {
@@ -197,6 +229,40 @@ const doSearch = async () => {
 
   loading.value = false;
 };
+
+/** 触底加载当前 Tab 的下一页（追加） */
+const loadMore = async () => {
+  const word = keyword.value.trim();
+  if (!word || loadingMore.value || loading.value) return;
+
+  if (tab.value === 'user' && !userHasMore.value) return;
+  if (tab.value === 'post' && !postHasMore.value) return;
+
+  loadingMore.value = true;
+  try {
+    if (tab.value === 'user') {
+      const page = await searchAccounts(word, userOffset.value + PAGE_SIZE, PAGE_SIZE);
+      const items = page.items ?? [];
+      users.value = [...users.value, ...items];
+      userOffset.value += items.length;
+      userHasMore.value = items.length >= PAGE_SIZE;
+    } else {
+      const page = await searchPosts(word, postOffset.value + PAGE_SIZE, PAGE_SIZE);
+      const items = page.items ?? [];
+      posts.value = [...posts.value, ...items];
+      postOffset.value += items.length;
+      postHasMore.value = items.length >= PAGE_SIZE;
+    }
+  } catch {
+    toast('加载失败，请重试');
+  } finally {
+    loadingMore.value = false;
+  }
+};
+
+onReachBottom(() => {
+  void loadMore();
+});
 
 const switchTab = (next: 'user' | 'post') => {
   tab.value = next;
@@ -379,12 +445,32 @@ onLoad((options) => {
 }
 
 .tag {
+  display: flex;
+  align-items: center;
   margin: 0 16rpx 16rpx 0;
-  padding: 10rpx 24rpx;
+  padding: 10rpx 12rpx 10rpx 24rpx;
   background-color: #f2f3f5;
   border-radius: 28rpx;
+}
+
+.tag__text {
   font-size: 25rpx;
   color: $text-2;
+}
+
+.tag__del {
+  margin-left: 10rpx;
+  padding: 0 8rpx;
+  font-size: 28rpx;
+  line-height: 1;
+  color: #b8bcc4;
+}
+
+.loadmore {
+  padding: 32rpx 0 calc(32rpx + env(safe-area-inset-bottom));
+  text-align: center;
+  font-size: 24rpx;
+  color: $text-3;
 }
 
 .tabs {

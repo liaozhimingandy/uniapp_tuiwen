@@ -195,8 +195,12 @@ export const publishPost = (payload: Record<string, unknown>): Promise<IPost> =>
 /** 删除自己的帖子 */
 export const deletePost = (postId: string): Promise<unknown> => http.del(apiUrls.post(postId));
 
-/** 搜索帖子（后端已实现 content 文本模糊匹配，未命中返回空列表） */
-export const searchPosts = (keyword: string): Promise<IPage<IPost>> => http.get(apiUrls.searchPost(keyword));
+/**
+ * 搜索帖子（content 文本模糊匹配，未命中返回空列表）
+ * @param offset 分页偏移量（触底加载下一页时递增）
+ */
+export const searchPosts = (keyword: string, offset = 0, limit = 20): Promise<IPage<IPost>> =>
+  http.get(apiUrls.searchPost(keyword), {data: {offset, limit}, hideError: true});
 
 /**
  * 热门帖子（免登录）

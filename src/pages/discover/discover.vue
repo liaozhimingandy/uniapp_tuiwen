@@ -55,6 +55,7 @@
             <text class="hot__likes">❤ {{ formatCount(item.like_count) }}</text>
           </view>
         </view>
+        <image v-if="hotThumb(item)" class="hot__thumb" :src="hotThumb(item)" mode="aspectFill" />
       </view>
     </view>
 
@@ -90,10 +91,10 @@
  * 树洞、视频号等二级入口收在这里；下方叠加热门内容与系统公告。
  */
 import {computed, ref} from 'vue';
-import {onShow} from '@dcloudio/uni-app';
-import {fetchHotPosts, fetchNotices, fetchUnreadCount} from '@/api';
+import {onPullDownRefresh, onShow} from '@dcloudio/uni-app';
+import {fetchHotPosts, fetchNotices, fetchUnreadCount, imageUrl} from '@/api';
 import {formatSmartTime} from '@/utils/datetime';
-import {contentText, formatCount, stripHtml} from '@/utils/text';
+import {contentImages, contentText, formatCount, stripHtml} from '@/utils/text';
 import {useAccountStore, useUserCacheStore} from '@/stores/account';
 import {getNotificationSettings} from '@/utils/notification';
 import {LOGIN_PAGE, toast} from '@/api/request';
@@ -138,6 +139,12 @@ const goFollow = () => {
 const hotSummary = (post: IPost): string => {
   const text = stripHtml(contentText(post.content));
   return text || '分享了几张图片';
+};
+
+/** 热门条目首图缩略图（无图返回空串，模板隐藏） */
+const hotThumb = (post: IPost): string => {
+  const imgs = contentImages(post.content);
+  return imgs.length ? imageUrl(imgs[0]) : '';
 };
 
 /** 热门条目作者名：走用户缓存（同一作者只请求一次），未加载完先显示占位 */
@@ -197,12 +204,21 @@ const loadUnread = async () => {
 };
 
 onShow(() => {
-  void loadHotPosts();
-  void loadUnread();
-  // 关闭「系统公告」开关则不拉取，省一次请求
-  if (getNotificationSettings().systemNotice) {
-    void loadNotices();
+  void refresh(false);
+});
+
+/** 拉取发现页全部数据；下拉时 force=true 会连公告一起刷新 */
+const refresh = async (force: boolean) => {
+  const tasks: Promise<unknown>[] = [loadHotPosts(), loadUnread()];
+  if (force || getNotificationSettings().systemNotice) {
+    tasks.push(loadNotices());
   }
+  await Promise.allSettled(tasks);
+};
+
+onPullDownRefresh(async () => {
+  await refresh(true);
+  uni.stopPullDownRefresh();
 });
 </script>
 
@@ -413,6 +429,15 @@ onShow(() => {
   margin-left: 16rpx;
   font-size: 22rpx;
   color: #ff7a45;
+}
+
+.hot__thumb {
+  width: 128rpx;
+  height: 128rpx;
+  margin-left: 20rpx;
+  border-radius: 12rpx;
+  background-color: #f2f3f5;
+  flex-shrink: 0;
 }
 
 /* ---------------- 公告条目 ---------------- */
