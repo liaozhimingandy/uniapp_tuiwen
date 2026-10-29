@@ -1,0 +1,69 @@
+name: CI
+
+# =============================================================================
+# 质量门禁：类型检查 + 两端构建
+#
+# 只验证不发布。发布在 build.yml（产物）/ build-images.yml（H5 镜像）。
+#
+# 为什么要构建 mp-weixin 而不只是 H5：
+# uni-app 的跨端差异大多在**编译期**就暴露（条件编译写法、不支持的 CSS 选择器、
+# 页面路径大小写等）。只跑 H5 会一路绿到发版才发现小程序端打不开。
+# =============================================================================
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Type check & build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # npm ci 要求 lockfile 与 package.json 严格一致；
+      # 依赖有变动时请本地 npm install 后一并提交 package-lock.json。
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Build H5
+        run: npm run build:h5
+
+      - name: Build WeChat Mini Program
+        run: npm run build:mp-weixin
+
+      - name: Build App resources
+        run: npm run build:app
+
+      # 构建日志里最常用来排查的问题是"产物到底生成了没"
+      - name: Show artifact sizes
+        if: always()
+        run: |
+          for dir in dist/build/h5 dist/build/mp-weixin dist/build/app; do
+            if [ -d "$dir" ]; then
+              echo "== $dir =="
+              du -sh "$dir"
+            else
+              echo "::warning::$dir 未生成"
+            fi
+          done

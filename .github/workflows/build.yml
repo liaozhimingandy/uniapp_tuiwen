@@ -1,0 +1,103 @@
+name: Build
+
+# =============================================================================
+# 多端产物：H5 / 微信小程序 / App 资源包
+#
+# 产物用途：
+#   h5        → 静态站点，可丢到任意 CDN 或由 build-images.yml 打成镜像
+#   mp-weixin → 用微信开发者工具「导入项目」后上传审核
+#   app       → App 资源包（www），用 HBuilderX 云打包产出 apk / ipa
+#
+# 为什么 App 端只出资源包：
+# 原生包需要 DCloud 云打包（或本地 Xcode / Android SDK），GitHub 托管 runner 上
+# 没有这套工具链，硬凑只会得到一个跑不起来的空壳。这里把「能自动化的部分」
+# 做到位，最后一步交给 HBuilderX，README 里有具体命令。
+#
+# tag 推送（v1.2.3）会额外建一个 GitHub Release，把三个 zip 挂上去。
+# =============================================================================
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  build:
+    name: Build all platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # ---------- H5 ----------
+      - name: Build H5
+        run: npm run build:h5
+
+      # ---------- 微信小程序 ----------
+      - name: Build WeChat Mini Program
+        run: npm run build:mp-weixin
+
+      # ---------- App 资源包 ----------
+      - name: Build App resources
+        run: npm run build:app
+
+      # ---------- 打包 ----------
+      # 用 commit sha 做后缀：同一次提交的产物可复现，也方便对照问题版本
+      - name: Package artifacts
+        run: |
+          set -euo pipefail
+          name="uniapp_tuiwen-${GITHUB_REF_NAME}-${GITHUB_SHA::7}"
+          mkdir -p release
+          # -j 去掉目录前缀，解压出来直接是站点根目录（拖进 nginx 就能用）
+          (cd dist/build/h5 && zip -qr "../../../release/${name}-h5.zip" .)
+          (cd dist/build/mp-weixin && zip -qr "../../../release/${name}-mp-weixin.zip" .)
+          (cd dist/build/app && zip -qr "../../../release/${name}-app.zip" .)
+          ls -lh release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniapp_tuiwen-${{ github.sha }}
+          path: release/*.zip
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    # 只有打 tag 才发 Release；分支构建只留 artifact
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true

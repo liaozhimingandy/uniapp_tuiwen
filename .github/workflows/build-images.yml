@@ -1,0 +1,203 @@
+name: Build H5 Image
+
+# =============================================================================
+# H5 产物打包成镜像并推送（Docker Hub / 阿里云 ACR，配了哪个推哪个）
+#
+# 与 CI 的分工：CI 只验证；本工作流负责登录仓库并推送。
+#
+# 标签策略（和 Web 端仓库保持一致，避免镜像仓库被塞满）：
+#   push main          → main
+#   push develop       → develop
+#   push tag vA.B.C    → A.B.C + A.B + latest
+#   workflow_dispatch  → 填了版本号用版本号（语义化版本再滚动 A.B / latest），
+#                        没填则用当前分支名
+#
+# 分支构建**不推** <分支>-<sha>：每次提交一个新标签、永不覆盖也没人会拉，
+# 只会把仓库越堆越满。一个分支恒定一个标签，推多少次都是覆盖同一个。
+#
+# 凭据（沿用后端 / Web 端仓库同一套命名）：
+#   Docker Hub : secrets.DOCKERHUB_USERNAME + secrets.DOCKERHUB_TOKEN
+#                兼容老命名 secrets.DOCKER_USERNAME + secrets.DOCKER_PASSWORD
+#   阿里云 ACR : secrets.ALIYUN_REGISTRY（如 registry.cn-shenzhen.aliyuncs.com）
+#                vars.ALIYUN_NAMESPACE（ACR 命名空间，必填）
+#                secrets.ALIYUN_USERNAME + secrets.ALIYUN_PASSWORD
+#
+# 失败策略：构建是主体，推送是附加。
+#   凭据缺失 / 凭据无效 → 只跳过推送并给 warning，镜像照样构建。
+#   ⚠️ 登录与推送必须在**同一个 job** 里：docker login 的凭据写在
+#   ~/.docker/config.json，跨 job（不同 runner 容器）不会继承，
+#   上一版镜像仓库就是因此变成了匿名推送，报 insufficient scopes。
+# =============================================================================
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'Dockerfile'
+      - 'docker/**'
+      - '.dockerignore'
+      - '.github/workflows/build-images.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '覆盖版本号（留空=当前分支名）'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: uniapp_tuiwen
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 计算版本与标签（只有版本号/标签，不含任何密钥，可以安全作为 job output）
+  # ---------------------------------------------------------------------------
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      tags: ${{ steps.calc.outputs.tags }}
+    steps:
+      - name: Calculate version & tags
+        id: calc
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          input="${{ github.event.inputs.version || '' }}"
+          ref_name="${GITHUB_REF_NAME}"
+          semver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [ -n "${input}" ]; then
+            version="${input#v}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${ref_name#v}"
+            if ! [[ "${version}" =~ ${semver_re} ]]; then
+              echo "::error::标签 ${ref_name} 不符合 vA.B.C 格式（如 v1.2.3）"
+              exit 1
+            fi
+          else
+            # 分支名里的 / 不能出现在 docker tag 里，统一换成 -
+            version="$(printf '%s' "${ref_name}" | tr '/' '-')"
+            if ! [[ "${version}" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+              echo "::error::分支名 ${ref_name} 含有镜像标签不允许的字符"
+              exit 1
+            fi
+          fi
+
+          if [[ "${version}" =~ ${semver_re} ]]; then
+            major_minor="${version%.*}"
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              # 只有打正式 tag 才滚动 latest，避免一次 dispatch 把 latest 顶掉
+              tags="${version} ${major_minor} latest"
+            else
+              tags="${version} ${major_minor}"
+            fi
+          else
+            tags="${version}"
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tags=${tags}" >> "${GITHUB_OUTPUT}"
+          echo "版本: ${version}"
+          echo "标签: ${tags}"
+
+  # ---------------------------------------------------------------------------
+  # 2) 构建 + 登录 + 推送（同一 job，凭据不跨 job）
+  # ---------------------------------------------------------------------------
+  image:
+    needs: meta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAGS: ${{ needs.meta.outputs.tags }}
+      # 新旧命名都兼容；两个都为空时就是"只构建不推送"
+      DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME || secrets.DOCKER_USERNAME }}
+      DOCKERHUB_PASS: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKER_PASSWORD }}
+      ACR_REGISTRY: ${{ secrets.ALIYUN_REGISTRY }}
+      ACR_NAMESPACE: ${{ vars.ALIYUN_NAMESPACE }}
+      ACR_USER: ${{ secrets.ALIYUN_USERNAME }}
+      ACR_PASS: ${{ secrets.ALIYUN_PASSWORD }}
+      NPM_REGISTRY: ${{ vars.NPM_REGISTRY || 'https://registry.npmjs.org' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Hub login
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_PASS != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ env.DOCKERHUB_PASS }}
+
+      - name: Aliyun ACR login
+        if: env.ACR_REGISTRY != '' && env.ACR_USER != '' && env.ACR_PASS != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ env.ACR_USER }}
+          password: ${{ env.ACR_PASS }}
+
+      - name: Build image
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          first_tag="$(echo "${TAGS}" | awk '{print $1}')"
+          # 只构建一次，多标签靠 docker tag 复用同一层，省掉重复构建的几分钟
+          docker build \
+            --build-arg NPM_REGISTRY="${NPM_REGISTRY}" \
+            -t "${IMAGE_NAME}:${first_tag}" \
+            -t "${IMAGE_NAME}:${VERSION}" \
+            .
+          echo "first_tag=${first_tag}" >> "${GITHUB_OUTPUT}"
+          docker images "${IMAGE_NAME}"
+
+      - name: Push to Docker Hub
+        if: env.DOCKERHUB_USER != '' && env.DOCKERHUB_PASS != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          pushed=""
+          for tag in ${TAGS}; do
+            image="${DOCKERHUB_USER}/${IMAGE_NAME}:${tag}"
+            docker tag "${IMAGE_NAME}:${VERSION}" "${image}"
+            docker push "${image}"
+            pushed="${pushed} ${image}"
+          done
+          echo "::notice::已推送到 Docker Hub:${pushed}"
+
+      - name: Push to Aliyun ACR
+        if: env.ACR_REGISTRY != '' && env.ACR_NAMESPACE != '' && env.ACR_USER != '' && env.ACR_PASS != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          pushed=""
+          for tag in ${TAGS}; do
+            image="${ACR_REGISTRY}/${ACR_NAMESPACE}/${IMAGE_NAME}:${tag}"
+            docker tag "${IMAGE_NAME}:${VERSION}" "${image}"
+            docker push "${image}"
+            pushed="${pushed} ${image}"
+          done
+          echo "::notice::已推送到阿里云 ACR:${pushed}"
+
+      - name: Warn if nothing was pushed
+        if: env.DOCKERHUB_USER == '' && env.ACR_REGISTRY == ''
+        run: echo "::warning::未配置镜像仓库凭据，本次只构建不推送（镜像已在本机生成，可用于验证 Dockerfile）"

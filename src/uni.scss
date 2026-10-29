@@ -1,0 +1,15 @@
+/**
+ * 全局 SCSS 变量（uni-app 会自动注入到每个 <style lang="scss"> 中，无需手动 @import）
+ *
+ * 与 web 端的视觉口径保持一致：品牌蓝 #027AFF、页面底色 #F4F4F2。
+ */
+$brand: #027aff;
+$brand-light: #e8f1ff;
+$text-1: #1a1a1a;
+$text-2: #666666;
+$text-3: #999999;
+$bg-page: #f2f3f5;
+$bg-card: #ffffff;
+$border: #ededed;
+$danger: #e34d59;
+$radius: 12rpx;

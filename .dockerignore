@@ -1,0 +1,12 @@
+node_modules
+dist
+unpackage
+.git
+.github
+.hbuilderx
+.idea
+.vscode
+*.log
+Dockerfile
+.dockerignore
+README.md
