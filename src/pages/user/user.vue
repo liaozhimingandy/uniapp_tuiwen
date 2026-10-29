@@ -25,6 +25,10 @@
           <text class="stats__num">{{ formatCount(worksCount) }}</text>
           <text class="stats__label">作品</text>
         </view>
+        <view class="stats__item">
+          <text class="stats__num">{{ formatCount(likeCount) }}</text>
+          <text class="stats__label">获赞</text>
+        </view>
       </view>
 
       <!-- 操作 -->
@@ -117,6 +121,8 @@ const isSelf = computed(() => !!accountId.value && accountId.value === accountSt
 const isFollowing = computed(() => !!profile.value?.follow?.is_following);
 const followerCount = computed(() => profile.value?.follow?.follower_count ?? 0);
 const followeeCount = computed(() => profile.value?.follow?.followee_count ?? 0);
+/** 获赞数：后端 GET /follows/{id}/count/ 的 like_count（帖子+评论被赞合计） */
+const likeCount = computed(() => profile.value?.follow?.like_count ?? 0);
 const worksCount = computed(() => total.value || works.value.length);
 
 const activeList = computed(() => (tab.value === 'works' ? works.value : liked.value));

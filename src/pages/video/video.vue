@@ -1,5 +1,11 @@
 <template>
   <view class="feed">
+    <!-- 顶部 推荐 / 关注 双 Tab -->
+    <view class="vtabs">
+      <text class="vtabs__item" :class="{'vtabs__item--on': tab === 'rec'}" @tap="switchTab('rec')">推荐</text>
+      <text class="vtabs__item" :class="{'vtabs__item--on': tab === 'follow'}" @tap="switchTab('follow')">关注</text>
+    </view>
+
     <!-- 加载 / 错误态 -->
     <view v-if="items.length === 0 && loading" class="state">
       <view class="spinner" />
@@ -8,6 +14,16 @@
     <view v-else-if="items.length === 0 && loadError" class="state" @tap="reload">
       <text class="state__emoji">⚠️</text>
       <text class="state__text">视频加载失败，点击重试</text>
+    </view>
+    <!-- 关注流未登录 -->
+    <view v-else-if="tab === 'follow' && !loggedIn" class="state" @tap="goLogin">
+      <text class="state__emoji">🔒</text>
+      <text class="state__text">登录后查看关注的人的视频</text>
+      <view class="state__btn">去登录</view>
+    </view>
+    <!-- 关注流空态 -->
+    <view v-else-if="items.length === 0" class="state">
+      <text class="state__text">{{ tab === 'follow' ? '关注的人还没有发视频' : '暂无视频' }}</text>
     </view>
 
     <swiper
@@ -19,7 +35,7 @@
       @change="onChange"
     >
       <swiper-item v-for="(item, idx) in items" :key="item.video_id">
-        <view class="slide" @tap="togglePlay">
+        <view class="slide" @tap="onSlideTap">
           <!-- 海报垫底，避免视频未起播时黑屏 -->
           <image
             v-if="item.poster_url"
@@ -61,6 +77,11 @@
             <text class="playmask__icon">▶</text>
           </view>
 
+          <!-- 双击点赞爱心动效 -->
+          <view v-if="heartShow && current === idx" class="heart-burst">
+            <text class="heart-burst__icon">❤️</text>
+          </view>
+
           <!-- 右侧互动栏 -->
           <view class="side">
             <!-- 头像 + 关注（已关注显示 ✓ 回显） -->
@@ -77,7 +98,7 @@
             </view>
             <text class="side__name">{{ item.author?.nickname || '匿名' }}</text>
 
-            <!-- 点赞（后端暂无视频点赞接口，本地乐观切换，待后端补端点） -->
+            <!-- 点赞（/likes/ target_type=2，乐观更新失败回滚） -->
             <view class="side__btn" @tap.stop="toggleLike(item)">
               <text class="side__icon" :class="{'side__icon--on': item.interaction?.liked}">{{ item.interaction?.liked ? '❤️' : '🤍' }}</text>
               <text class="side__num">{{ formatCount(item.stats?.like_count) }}</text>
@@ -87,6 +108,12 @@
             <view class="side__btn" @tap.stop="openComments(item)">
               <text class="side__icon">💬</text>
               <text class="side__num">{{ formatCount(item.stats?.comment_count) }}</text>
+            </view>
+
+            <!-- 收藏（/favorites/ target_type=2） -->
+            <view class="side__btn" @tap.stop="toggleCollect(item)">
+              <text class="side__icon" :class="{'side__icon--on': item.interaction?.collected}">{{ item.interaction?.collected ? '⭐' : '☆' }}</text>
+              <text class="side__num">{{ formatCount(item.stats?.favorite_count) }}</text>
             </view>
 
             <!-- 分享 -->
@@ -171,20 +198,37 @@ import {onLoad, onUnload} from '@dcloudio/uni-app';
 // #ifdef H5
 import Hls from 'hls.js';
 // #endif
-import {fetchVideoFeed, follow, unfollow, fetchVideoComments, createVideoComment, deleteVideoComment} from '@/api';
+import {fetchVideoFeed, fetchFollowVideoFeed, likeVideo, unlikeVideo, favoriteVideo, unfavoriteVideo,
+        follow, unfollow, fetchVideoComments, createVideoComment, deleteVideoComment} from '@/api';
 import {staticLink, config} from '@/config';
 import {isLoggedIn, getAccountId} from '@/utils/token';
 import {LOGIN_PAGE, toast} from '@/api/request';
 import type {IVideoItem, IComment} from '@/types';
 
-const items = ref<IVideoItem[]>([]);
+/** 两个 feed 各自独立的游标与列表，切 Tab 不丢已加载内容 */
+type FeedTab = 'rec' | 'follow';
+interface FeedState {
+  items: IVideoItem[];
+  cursor: string | null;
+  feedId: string | null;
+  hasMore: boolean;
+  loaded: boolean;
+  error: boolean;
+}
+const newFeedState = (): FeedState => ({items: [], cursor: null, feedId: null, hasMore: true, loaded: false, error: false});
+const feeds: Record<FeedTab, FeedState> = {rec: newFeedState(), follow: newFeedState()};
+
+const tab = ref<FeedTab>('rec');
 const current = ref(0);
-const hasMore = ref(true);
 const loading = ref(false);
-const loadError = ref(false);
 const playing = ref(false);
 const soundOn = ref(false);
-const feedId = ref<string | null>(null);
+const loggedIn = ref(isLoggedIn());
+
+const state = computed(() => feeds[tab.value]);
+const items = computed(() => state.value.items);
+const hasMore = computed(() => state.value.hasMore);
+const loadError = computed(() => state.value.error);
 
 // #ifdef H5
 /** 已挂载 hls 实例，避免重复创建 */
@@ -290,32 +334,57 @@ const onChange = (e: {detail: {current: number}}) => {
   if (commentOpen.value) closeComments();
 };
 
+/** 切 Tab：暂停旧流播放，回到顶部；关注流未登录直接展示登录引导 */
+const switchTab = (next: FeedTab) => {
+  if (tab.value === next) return;
+  tab.value = next;
+  loggedIn.value = isLoggedIn();
+  current.value = 0;
+  playing.value = false;
+  items.value.forEach((_, i) => getPlayer(i)?.pause?.());
+  const st = feeds[next];
+  if (next === 'follow' && !loggedIn.value) return; // 游客态不请求
+  if (!st.loaded) void loadMore();
+  else setTimeout(() => playIdx(0), 60); // 等 swiper 重渲染完再起播
+};
+
 const loadMore = async () => {
-  if (loading.value || !hasMore.value) return;
+  const st = feeds[tab.value];
+  if (loading.value || !st.hasMore) return;
+  if (tab.value === 'follow' && !isLoggedIn()) return;
   loading.value = true;
   try {
-    const last = items.value[items.value.length - 1];
-    const page = await fetchVideoFeed(last?.video_id || null, feedId.value, 6);
+    const page = tab.value === 'rec'
+      ? await fetchVideoFeed(st.cursor, st.feedId, 6)
+      : await fetchFollowVideoFeed(st.cursor, st.feedId, 6);
     const fresh = (page.items ?? []).filter(
-      (it) => !items.value.some((old) => old.video_id === it.video_id),
+      (it) => !st.items.some((old) => old.video_id === it.video_id),
     );
-    items.value = [...items.value, ...fresh];
-    feedId.value = page.feed_id || feedId.value;
-    hasMore.value = Boolean(page.next_cursor) && fresh.length > 0;
+    st.items = [...st.items, ...fresh];
+    st.feedId = page.feed_id || st.feedId;
+    st.cursor = page.next_cursor || null;
+    st.hasMore = Boolean(page.next_cursor) && fresh.length > 0;
+    st.loaded = true;
   } catch {
-    loadError.value = items.value.length === 0;
+    st.error = st.items.length === 0;
   } finally {
     loading.value = false;
   }
 };
 
 const reload = () => {
-  loadError.value = false;
-  items.value = [];
-  hasMore.value = true;
-  feedId.value = null;
+  const st = feeds[tab.value];
+  st.error = false;
+  st.items = [];
+  st.cursor = null;
+  st.feedId = null;
+  st.hasMore = true;
+  st.loaded = false;
+  current.value = 0;
   void loadMore();
 };
+
+const goLogin = () => uni.navigateTo({url: LOGIN_PAGE});
 
 // ----------------------------- 互动：关注 -----------------------------
 
@@ -341,15 +410,84 @@ const toggleFollow = (item: IVideoItem) => {
     });
 };
 
-// ----------------------------- 互动：点赞（本地乐观） -----------------------------
+// ----------------------------- 互动：点赞 / 收藏（真实 API，乐观更新） -----------------------------
 
-const toggleLike = (item: IVideoItem) => {
-  // 后端暂无视频点赞端点，仅本地切换 + 计数 ±1
+/** 统一的乐观互动：先切 UI，请求失败回滚 */
+const optimistic = (item: IVideoItem, field: 'liked' | 'collected', run: () => Promise<unknown>) => {
+  if (!isLoggedIn()) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
   if (!item.interaction) item.interaction = {};
   if (!item.stats) item.stats = {view_count: 0, like_count: 0, comment_count: 0, share_count: 0};
-  const liked = !item.interaction.liked;
-  item.interaction.liked = liked;
-  item.stats.like_count = Math.max(0, (item.stats.like_count || 0) + (liked ? 1 : -1));
+
+  const on = !item.interaction[field];
+  item.interaction[field] = on;
+  const bump = (delta: number) => {
+    if (field === 'liked') {
+      item.stats!.like_count = Math.max(0, (item.stats!.like_count || 0) + delta);
+    } else {
+      item.stats!.favorite_count = Math.max(0, (item.stats!.favorite_count || 0) + delta);
+    }
+  };
+  bump(on ? 1 : -1);
+
+  run().catch((err: any) => {
+    item.interaction![field] = !on; // 回滚
+    bump(on ? -1 : 1);
+    toast(err?.detail || '操作失败');
+  });
+};
+
+/** 点赞按钮：开/关切换 */
+const toggleLike = (item: IVideoItem) => {
+  optimistic(item, 'liked', () => (item.interaction?.liked ? likeVideo(item.video_id) : unlikeVideo(item.video_id)));
+};
+
+/** 收藏按钮：开/关切换 */
+const toggleCollect = (item: IVideoItem) => {
+  optimistic(item, 'collected', () => (item.interaction?.collected ? favoriteVideo(item.video_id) : unfavoriteVideo(item.video_id)));
+};
+
+// ----------------------------- 双击点赞（爱心动效） -----------------------------
+
+const heartShow = ref(false);
+let heartTimer: ReturnType<typeof setTimeout> | null = null;
+let lastTapAt = 0;
+let tapPending: ReturnType<typeof setTimeout> | null = null;
+
+/** 爱心动效：600ms 后淡出 */
+const burstHeart = () => {
+  heartShow.value = true;
+  if (heartTimer) clearTimeout(heartTimer);
+  heartTimer = setTimeout(() => {
+    heartShow.value = false;
+  }, 600);
+};
+
+/**
+ * 单击暂停/播放，双击点赞（抖音交互）：
+ * 单击延迟 300ms 执行，等可能的第二击；第二击进来就取消单击、改点赞。
+ */
+const onSlideTap = () => {
+  const now = Date.now();
+  if (now - lastTapAt < 300) {
+    lastTapAt = 0;
+    if (tapPending) {
+      clearTimeout(tapPending);
+      tapPending = null;
+    }
+    const item = items.value[current.value];
+    // 双击只赞不取消（抖音语义）；爱心动效每次都播
+    if (item && !item.interaction?.liked) toggleLike(item);
+    burstHeart();
+  } else {
+    lastTapAt = now;
+    tapPending = setTimeout(() => {
+      tapPending = null;
+      togglePlay();
+    }, 300);
+  }
 };
 
 // ----------------------------- 互动：评论 -----------------------------
@@ -446,10 +584,13 @@ const formatCount = (n?: number | null): string => {
 };
 
 onLoad(() => {
+  loggedIn.value = isLoggedIn();
   void loadMore();
 });
 
 onUnload(() => {
+  if (heartTimer) clearTimeout(heartTimer);
+  if (tapPending) clearTimeout(tapPending);
   // #ifdef H5
   hlsMap.forEach((hls) => hls.destroy());
   hlsMap.clear();
@@ -461,6 +602,78 @@ onUnload(() => {
 .feed {
   height: 100vh;
   background-color: #000000;
+}
+
+/* 顶部 推荐/关注 Tab */
+.vtabs {
+  position: fixed;
+  top: calc(24rpx + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: center;
+  gap: 48rpx;
+  pointer-events: none;
+}
+
+.vtabs__item {
+  pointer-events: auto;
+  font-size: 30rpx;
+  color: rgba(255, 255, 255, 0.65);
+  text-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.5);
+}
+
+.vtabs__item--on {
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 10rpx;
+}
+
+/* 双击点赞爱心动效 */
+.heart-burst {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  animation: heart-pop 0.6s ease-out forwards;
+}
+
+.heart-burst__icon {
+  font-size: 140rpx;
+  filter: drop-shadow(0 4rpx 16rpx rgba(0, 0, 0, 0.4));
+}
+
+@keyframes heart-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.1) translateY(-40rpx);
+  }
+}
+
+/* 登录引导按钮 */
+.state__btn {
+  margin-top: 28rpx;
+  padding: 14rpx 56rpx;
+  border-radius: 40rpx;
+  background-color: #fe2c55;
+  color: #ffffff;
+  font-size: 28rpx;
 }
 
 .swiper {

@@ -79,6 +79,8 @@ export interface IFollow {
   follower_count: number;
   followee_count: number;
   is_following: boolean;
+  /** 获赞数（帖子+评论被赞合计，后端聚合） */
+  like_count?: number;
 }
 
 /** 天亮即焚的一条心事 */
@@ -112,6 +114,7 @@ export interface IVideoStats {
   like_count: number;
   comment_count: number;
   share_count: number;
+  favorite_count?: number;
 }
 
 /** 推荐流单条视频 */

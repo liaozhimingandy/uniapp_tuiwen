@@ -81,6 +81,7 @@ export const apiUrls = {
 
   // 视频
   videoFeed: () => '/videos/feed/',
+  followVideoFeed: () => '/videos/follow/',
 
   // 其它
   notices: () => '/notices/system/',
@@ -259,6 +260,47 @@ export const fetchFavoritedPosts = (accountId: string, cursor: string | null = n
 /** 关注流：关注对象的公开帖 + 自己的帖子（需登录） */
 export const fetchFollowPosts = (cursor: string | null = null, limit = 10): Promise<IPage<IPost>> =>
   http.get(apiUrls.followPosts(), {data: {limit, ...(cursor ? {cursor} : {})}});
+
+// ------------------------------ 视频互动 ------------------------------
+
+/** 视频点赞（target_type=2，点赞人由服务端从令牌取） */
+export const likeVideo = (videoId: string): Promise<unknown> =>
+  http.post(apiUrls.likes(), {target_id: videoId, target_type: COMMENT_TARGET_VIDEO});
+
+/** 取消视频点赞 */
+export const unlikeVideo = (videoId: string): Promise<unknown> =>
+  http.del(`${apiUrls.deleteLike(videoId)}?target_type=${COMMENT_TARGET_VIDEO}`);
+
+/** 视频点赞状态（count + is_liked） */
+export const fetchVideoLikeState = (videoId: string): Promise<ILikeState> =>
+  http.get(apiUrls.likeCount(videoId), {data: {target_type: COMMENT_TARGET_VIDEO}});
+
+/** 收藏视频（target_type=2） */
+export const favoriteVideo = (videoId: string): Promise<unknown> =>
+  http.post(apiUrls.favorites(), {target_id: videoId, target_type: COMMENT_TARGET_VIDEO});
+
+/** 取消收藏视频 */
+export const unfavoriteVideo = (videoId: string): Promise<unknown> =>
+  http.del(`${apiUrls.deleteFavorite(videoId)}?target_type=${COMMENT_TARGET_VIDEO}`);
+
+/** 视频收藏状态（count + is_favorited） */
+export const fetchVideoFavoriteState = (videoId: string): Promise<IFavoriteState> =>
+  http.get(apiUrls.favoriteCount(videoId), {data: {target_type: COMMENT_TARGET_VIDEO}});
+
+/** 视频关注流（关注对象 + 自己的视频，需登录） */
+export const fetchFollowVideoFeed = (
+  cursor: string | null = null,
+  feedId: string | null = null,
+  limit = 6,
+): Promise<IVideoFeedPage> =>
+  http.get<IVideoFeedPage>(apiUrls.followVideoFeed(), {
+    data: {
+      limit,
+      ...(cursor ? {cursor} : {}),
+      ...(feedId ? {feed_id: feedId} : {}),
+    },
+    hideError: true,
+  });
 
 // ------------------------------ 天亮即焚 ------------------------------
 

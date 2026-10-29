@@ -29,6 +29,10 @@
           <text class="stats__num">{{ followerCount }}</text>
           <text class="stats__label">粉丝</text>
         </view>
+        <view class="stats__item">
+          <text class="stats__num">{{ likeCount }}</text>
+          <text class="stats__label">获赞</text>
+        </view>
       </view>
 
       <!-- 内容 -->
@@ -154,6 +158,8 @@ const displayName = computed(() => accountStore.displayName);
 const username = computed(() => accountStore.account.username || '');
 const followeeCount = computed(() => follow.value?.followee_count ?? 0);
 const followerCount = computed(() => follow.value?.follower_count ?? 0);
+/** 获赞数：后端关注统计接口聚合的 like_count（帖子+评论被赞合计） */
+const likeCount = computed(() => follow.value?.like_count ?? 0);
 
 /** 拉自己的关注统计 */
 const loadStats = async () => {
