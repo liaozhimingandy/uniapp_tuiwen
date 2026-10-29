@@ -36,10 +36,13 @@
     </view>
 
     <!-- 热门内容：最近 7 天点赞最多的公开帖 -->
-    <view v-if="hotPosts.length" class="block">
+    <view v-if="hotPosts.length || hotOffset > 0" class="block">
       <view class="block__head">
         <text class="block__title">热门内容</text>
-        <text class="block__sub">近 7 天</text>
+        <view class="block__refresh" @tap="shuffleHot">
+          <text class="block__refresh-icon" :class="{'block__refresh-icon--spin': hotShuffling}">⟳</text>
+          <text class="block__refresh-text">换一批</text>
+        </view>
       </view>
       <view
         v-for="(item, index) in hotPosts"
@@ -107,6 +110,9 @@ const hotPosts = ref<IPost[]>([]);
 const notices = ref<INotice[]>([]);
 const noticeLoading = ref(false);
 const unreadCount = ref(0);
+/** 热门翻页偏移（「换一批」递增，到底回到 0 循环） */
+const hotOffset = ref(0);
+const hotShuffling = ref(false);
 /** 是否展示系统公告：受通知设置控制 */
 const showNotice = computed(() => getNotificationSettings().systemNotice);
 
@@ -165,13 +171,37 @@ const noticeText = (n: INotice): string => {
   return c.text || '';
 };
 
-const loadHotPosts = async () => {
+const loadHotPosts = async (offset = 0) => {
   try {
-    const page = await fetchHotPosts(5);
-    hotPosts.value = (page.items ?? []) as IPost[];
+    const page = await fetchHotPosts(5, offset);
+    const items = (page.items ?? []) as IPost[];
+    hotPosts.value = items;
+    hotOffset.value = offset;
   } catch {
     // 热门失败不影响发现页主体，直接隐藏区块
     hotPosts.value = [];
+    hotOffset.value = 0;
+  }
+};
+
+/** 换一批：向后翻一页；没有下一页数据时回到开头 */
+const shuffleHot = async () => {
+  if (hotShuffling.value) return;
+  hotShuffling.value = true;
+  const nextOffset = hotOffset.value + 5;
+  try {
+    const page = await fetchHotPosts(5, nextOffset);
+    const items = (page.items ?? []) as IPost[];
+    if (items.length > 0) {
+      hotPosts.value = items;
+      hotOffset.value = nextOffset;
+    } else {
+      await loadHotPosts(0);
+    }
+  } catch {
+    toast('换一批失败，请重试');
+  } finally {
+    hotShuffling.value = false;
   }
 };
 
@@ -358,6 +388,36 @@ onPullDownRefresh(async () => {
 .block__sub {
   font-size: 22rpx;
   color: $text-3;
+}
+
+.block__refresh {
+  display: flex;
+  align-items: center;
+  padding: 6rpx 0;
+}
+
+.block__refresh-icon {
+  font-size: 28rpx;
+  color: $brand;
+  margin-right: 6rpx;
+}
+
+.block__refresh-icon--spin {
+  animation: hot-spin 0.6s linear infinite;
+}
+
+@keyframes hot-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.block__refresh-text {
+  font-size: 24rpx;
+  color: $brand;
 }
 
 .block__tip {

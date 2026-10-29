@@ -207,9 +207,11 @@ export const searchPosts = (keyword: string, offset = 0, limit = 20): Promise<IP
  *
  * 最近 7 天的公开帖按点赞数倒序，只返回有过点赞的内容；
  * 发现页/搜索页的「热门内容」数据源。
+ *
+ * @param offset 分页偏移量（发现页「换一批」时递增）
  */
-export const fetchHotPosts = (limit = 5): Promise<IPage<IPost>> =>
-  http.get(apiUrls.hotPosts(), {data: {limit, days: 7}, hideError: true});
+export const fetchHotPosts = (limit = 5, offset = 0): Promise<IPage<IPost>> =>
+  http.get(apiUrls.hotPosts(), {data: {limit, days: 7, offset}, hideError: true});
 
 // ------------------------------ 评论 / 点赞 ------------------------------
 

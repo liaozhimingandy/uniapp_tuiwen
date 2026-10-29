@@ -77,6 +77,12 @@
             <text class="user-row__name ellipsis">{{ item.nickname || item.username || '用户' }}</text>
             <text class="user-row__id ellipsis">@{{ item.username || item.account_id }}</text>
           </view>
+          <text
+            v-if="showFollowBtn(item)"
+            class="user-row__btn"
+            :class="{'user-row__btn--on': isFollowing(item)}"
+            @tap.stop="toggleFollowUser(item)"
+          >{{ isFollowing(item) ? '已关注' : '关注' }}</text>
         </view>
         <view v-if="userHasMore" class="loadmore">{{ loadingMore ? '加载中…' : '上拉加载更多' }}</view>
         <view v-else-if="users.length > 0" class="loadmore">没有更多用户了</view>
@@ -106,17 +112,19 @@ import {ref} from 'vue';
 import {onLoad, onReachBottom} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
 import PostCard from '@/components/PostCard.vue';
-import {searchAccounts, searchPosts, fetchHotPosts} from '@/api';
+import {searchAccounts, searchPosts, fetchHotPosts, follow as followApi, unfollow as unfollowApi} from '@/api';
 import {getItem, setItem} from '@/utils/storage';
 import {contentText, formatCount, stripHtml} from '@/utils/text';
-import {useUserCacheStore} from '@/stores/account';
-import {toast} from '@/api/request';
-import type {IAccount, IPost} from '@/types';
+import {isLoggedIn} from '@/utils/token';
+import {useAccountStore, useUserCacheStore} from '@/stores/account';
+import {LOGIN_PAGE, toast} from '@/api/request';
+import type {IAccount, IFollow, IPost} from '@/types';
 
 const HISTORY_KEY = 'tw_search_history';
 /** 每页条数（用户/内容搜索一致，返回不足一页即认为没有更多） */
 const PAGE_SIZE = 20;
 
+const accountStore = useAccountStore();
 const userCacheStore = useUserCacheStore();
 
 const keyword = ref('');
@@ -270,6 +278,41 @@ const switchTab = (next: 'user' | 'post') => {
 
 const goUser = (accountId: string) => {
   uni.navigateTo({url: `/pages/user/user?id=${accountId}`});
+};
+
+/** 是否显示关注按钮：登录用户搜别人时显示（自己/匿名不显示） */
+const showFollowBtn = (u: IAccount): boolean => {
+  const selfId = accountStore.account.account_id;
+  return !!selfId && u.account_id !== selfId;
+};
+
+const isFollowing = (u: IAccount): boolean => !!u.follow?.is_following;
+
+/** 关注/取关（乐观更新，失败回滚） */
+const toggleFollowUser = async (u: IAccount) => {
+  if (!isLoggedIn()) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  const prev = u.follow as IFollow | undefined;
+  const target = !prev?.is_following;
+  // 乐观更新本地状态
+  u.follow = {
+    follower_count: Math.max(0, (prev?.follower_count ?? 0) + (target ? 1 : -1)),
+    followee_count: prev?.followee_count ?? 0,
+    is_following: target,
+    like_count: prev?.like_count ?? 0,
+  };
+  try {
+    if (target) {
+      await followApi(u.account_id);
+    } else {
+      await unfollowApi(u.account_id);
+    }
+  } catch {
+    // 回滚
+    u.follow = prev;
+  }
 };
 
 onLoad((options) => {
@@ -526,6 +569,21 @@ onLoad((options) => {
   display: block;
   margin-top: 4rpx;
   font-size: 23rpx;
+  color: $text-3;
+}
+
+.user-row__btn {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 28rpx;
+  border-radius: 32rpx;
+  background-color: $brand;
+  font-size: 24rpx;
+  color: #ffffff;
+}
+
+.user-row__btn--on {
+  background-color: #f2f3f5;
   color: $text-3;
 }
 </style>
