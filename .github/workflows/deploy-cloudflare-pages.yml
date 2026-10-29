@@ -81,12 +81,26 @@ jobs:
           VITE_APP_BUILD: ${{ github.sha }}
         run: npm run build:h5
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/pages-action@v1
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          projectName: tuiwen-h5
-          directory: dist/build/h5
-          branch: main
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+      # 用 wrangler CLI 直接部署，不依赖第三方 action 的版本
+      # 固定大版本 4：wrangler 3 已被 npm 标为 legacy（dist-tag: legacy=3.114.x），
+      # 新版 Cloudflare API 只保证 4.x 兼容；pages deploy 的这几个参数在 4.x 未变。
+      # 仅当仓库已配置 Cloudflare Secrets 时才部署；未配置则跳过并提示（不影响构建/类型检查）。
+      - name: 部署到 Cloudflare Pages
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@4 pages deploy dist/build/h5 \
+            --project-name="tuiwen-h5" \
+            --branch="${GITHUB_REF_NAME}" \
+            --commit-hash="${GITHUB_SHA}" \
+            --commit-dirty=false
+
+      - name: 提示未配置 Cloudflare Secrets
+        if: ${{ !(secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '') }}
+        run: |
+          echo "::warning::未检测到 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID，已跳过 Cloudflare Pages 部署。"
+          echo "请在仓库 Settings → Secrets and variables → Actions 中添加这两个 Secret 后重新推送。"
+
