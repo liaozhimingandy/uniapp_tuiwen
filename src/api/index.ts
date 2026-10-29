@@ -122,6 +122,14 @@ export const fetchFollow = (accountId: string): Promise<IFollow> => http.get(api
 export const updateAccount = (accountId: string, payload: Partial<IAccount>): Promise<IAccount> =>
   http.put<IAccount>(apiUrls.updateAccount(accountId), payload as Record<string, unknown>, {hideError: true});
 
+/** 检测用户名是否已被占用（改用户名前置校验） */
+export const checkUsernameExists = (username: string): Promise<{exists: boolean}> =>
+  http.get<{exists: boolean}>(apiUrls.checkUsername(username), {hideError: true});
+
+/** 修改用户名（PATCH /accounts/credential/，type=username；后端统一小写存储） */
+export const changeUsername = (username: string): Promise<IAccount> =>
+  http.patch<IAccount>(apiUrls.updateUsername(), {type: 'username', new_value: username} as Record<string, unknown>);
+
 /** 关注 */
 export const follow = (followeeId: string): Promise<unknown> =>
   http.post(apiUrls.follows(), {followee_id: followeeId});

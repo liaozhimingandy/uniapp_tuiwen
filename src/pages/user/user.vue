@@ -6,7 +6,7 @@
         <UserAvatar :name="displayName" :src="profile?.avatar" :size="128" />
         <view class="profile__info">
           <text class="profile__name ellipsis">{{ displayName }}</text>
-          <text class="profile__id">@{{ profile?.username || accountId }}</text>
+          <text class="profile__id">@{{ profile?.username }}</text>
         </view>
       </view>
 
