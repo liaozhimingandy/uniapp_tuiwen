@@ -44,10 +44,11 @@
             mode="aspectFill"
           />
           <!-- #ifdef H5 -->
+          <!-- 不绑 src: uni-video 会用原生方式加载 m3u8(Chrome 报错),
+               统一由 setupHls 接管(Safari 原生 HLS / 其他浏览器 hls.js) -->
           <video
             :id="'hv' + idx"
             class="player"
-            :src="staticLink(item.play_url)"
             :muted="!soundOn"
             :loop="true"
             playsinline
@@ -249,7 +250,12 @@ const activeItem = ref<IVideoItem | null>(null);
 
 const getPlayer = (idx: number): any => {
   // #ifdef H5
-  return document.getElementById('hv' + idx);
+  // uni-app 会把模板里的 <video> 编译成 <uni-video> 自定义组件,
+  // 真正的 HTMLVideoElement 在其内部 —— 拿宿主元素调 play/canPlayType
+  // 全部静默失败(视频永远播不出来), 必须向下找一层。
+  const host = document.getElementById('hv' + idx) as any;
+  if (!host) return null;
+  return host.tagName === 'VIDEO' ? host : host.querySelector('video');
   // #endif
   // #ifndef H5
   return uni.createVideoContext('uv' + idx);
@@ -704,6 +710,14 @@ onUnload(() => {
 }
 
 .player {
+  object-fit: cover;
+}
+
+/* H5 端 <video> 被编译成 uni-video 组件, 尺寸样式落在宿主上,
+   内部真实的 video 元素需要撑满宿主 */
+.player:deep(video) {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
 }
 
