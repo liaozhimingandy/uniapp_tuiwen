@@ -146,6 +146,24 @@ export interface IVideoFeedPage {
   has_more: boolean;
 }
 
+/** 「我的视频」页单条（GET /videos/mine/，含转码状态） */
+export interface IMyVideo {
+  video_id: string;
+  title?: string | null;
+  description?: string | null;
+  poster_url?: string | null;
+  play_url?: string | null;
+  duration?: number | null;
+  orientation?: number | null;
+  /** 0待转码 1转码中 2成功 3失败 */
+  transcode_status: number;
+  transcode_msg?: string | null;
+  like_count: number;
+  comment_count: number;
+  favorite_count: number;
+  created_at?: string | null;
+}
+
 /** 通知 / 公告 */
 export interface INotice {
   id: number;

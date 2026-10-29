@@ -5,7 +5,9 @@
  * 路径口径与 Web 端 `src/services/api.ts` 保持一致，两端同源。
  */
 import {http, uploadImage} from '@/api/request';
-import {config, staticLink} from '@/config';
+import {config, staticLink, getApiBaseUrl} from '@/config';
+import {getToken} from '@/utils/token';
+import {getLocalTimeZone} from '@/utils/datetime';
 import type {
   IAccount,
   IComment,
@@ -18,6 +20,7 @@ import type {
   IPost,
   ISnap,
   IVideoFeedPage,
+  IMyVideo,
 } from '@/types';
 
 /** 评论 / 点赞的 target_type：1 = 帖子，2 = 视频（对应后端 Comment.TargetTypeEnum） */
@@ -83,6 +86,8 @@ export const apiUrls = {
   // 视频
   videoFeed: () => '/videos/feed/',
   followVideoFeed: () => '/videos/follow/',
+  mineVideos: () => '/videos/mine/',
+  uploadVideo: () => '/videos/upload/',
 
   // 其它
   notices: () => '/notices/system/',
@@ -219,9 +224,9 @@ export const fetchHotPosts = (limit = 5, offset = 0): Promise<IPage<IPost>> =>
 export const fetchComments = (postId: string): Promise<IComment[] | IPage<IComment>> =>
   http.get(apiUrls.comments(postId));
 
-/** 视频评论列表（target_type=2） */
-export const fetchVideoComments = (videoId: string): Promise<IComment[] | IPage<IComment>> =>
-  http.get(apiUrls.commentsFor(COMMENT_TARGET_VIDEO, videoId), {hideError: true});
+/** 视频评论列表（target_type=2, cursor 为上一页最旧一条的 comment_id, 游标分页） */
+export const fetchVideoComments = (videoId: string, cursor: string | null = null, limit = 20): Promise<IComment[] | IPage<IComment>> =>
+  http.get(apiUrls.commentsFor(COMMENT_TARGET_VIDEO, videoId), {data: {limit, ...(cursor ? {cursor} : {})}, hideError: true});
 
 /** 发评论（评论人由服务端从令牌取） */
 export const createComment = (postId: string, content: string): Promise<IComment> =>
@@ -359,6 +364,46 @@ export const fetchVideoFeed = (
     },
     // 视频页自己展示"加载失败/重试"，不需要全局 toast
     hideError: true,
+  });
+
+/** 我的视频列表（含转码状态，按时间倒序，offset 翻页） */
+export const fetchMyVideos = (offset = 0, limit = 12): Promise<IMyVideo[]> =>
+  http.get(apiUrls.mineVideos(), {data: {offset, limit}, hideError: true});
+
+/**
+ * 上传视频（multipart/form-data, uni.uploadFile）
+ *
+ * 后端 POST /videos/upload/ 可选认证 —— 未登录上传的视频 account_id 为 NULL,
+ * 建议调用方先确认登录态。onProgress 回调 0~100。
+ */
+export const uploadVideoFile = (filePath: string, title: string, onProgress?: (percent: number) => void): Promise<IMyVideo> =>
+  new Promise((resolve, reject) => {
+    const token = getToken();
+    const task = uni.uploadFile({
+      url: `${getApiBaseUrl()}/videos/upload/`,
+      filePath,
+      name: 'file',
+      formData: title ? {title} : {},
+      header: {
+        Authorization: token.access_token ? `Bearer ${token.access_token}` : '',
+        'X-Timezone': getLocalTimeZone(),
+      },
+      timeout: 600000,
+      success: (res) => {
+        try {
+          const body = JSON.parse(res.data || '{}');
+          if (res.statusCode === 201 || (res.statusCode >= 200 && res.statusCode < 300)) {
+            resolve(body as IMyVideo);
+            return;
+          }
+          reject(Object.assign(new Error(body?.detail || '上传失败'), {detail: body?.detail || '上传失败'}));
+        } catch {
+          reject(Object.assign(new Error('上传返回格式异常'), {detail: '上传返回格式异常'}));
+        }
+      },
+      fail: () => reject(Object.assign(new Error('上传失败，请检查网络'), {detail: '上传失败，请检查网络'})),
+    });
+    task.onProgressUpdate((res) => onProgress?.(res.progress));
   });
 
 // ------------------------------ 其它 ------------------------------

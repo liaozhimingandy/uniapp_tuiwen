@@ -144,7 +144,7 @@
             <text class="meta__author">@{{ item.author?.nickname || '匿名' }}</text>
           </view>
 
-          <!-- 底部播放进度条(仅当前屏渲染): 时间 + 可拖拽 seek -->
+          <!-- 底部播放进度条(仅当前屏渲染): 拖拽时显示目标时间气泡 -->
           <view
             v-if="idx === current && duration > 0"
             class="progress"
@@ -153,22 +153,26 @@
             @touchmove.stop.prevent="onSeekMove"
             @touchend.stop="onSeekEnd"
           >
-            <view class="progress__time">
+            <view v-if="dragging" class="progress__bubble" :style="{left: (displayProgress * 100) + '%'}">
               <text>{{ fmtTime(displayTime) }}</text>
-              <text>{{ fmtTime(duration) }}</text>
             </view>
             <view class="progress__track">
               <view class="progress__bar" :style="{width: (displayProgress * 100) + '%'}" />
-              <view class="progress__dot" :style="{left: (displayProgress * 100) + '%'}" />
+              <view class="progress__dot" :class="{'progress__dot--big': dragging}" :style="{left: (displayProgress * 100) + '%'}" />
             </view>
           </view>
         </view>
       </swiper-item>
     </swiper>
 
-    <!-- 声音开关（H5 自动播放策略要求先静音；小程序端靠 muted 属性绑定） -->
-    <view class="sound" @tap="toggleSound">
-      <text>{{ soundOn ? '🔊' : '🔇' }}</text>
+    <!-- 顶部右侧操作区：我的视频 + 声音开关 -->
+    <view class="topbar">
+      <view class="topbar__btn" @tap="goVideoHub">
+        <text>👤</text>
+      </view>
+      <view class="topbar__btn" @tap="toggleSound">
+        <text>{{ soundOn ? '🔊' : '🔇' }}</text>
+      </view>
     </view>
 
     <!-- 评论面板（底部抽屉） -->
@@ -184,10 +188,15 @@
           <view v-if="commentLoading && comments.length === 0" class="sheet__hint">加载中…</view>
           <view v-else-if="comments.length === 0" class="sheet__hint">还没有评论，来抢沙发</view>
           <view v-for="c in comments" :key="c.comment_id" class="cmt">
-            <text class="cmt__author">{{ c.nickname || '匿名' }}：</text>
+            <view class="cmt__head">
+              <text class="cmt__author">{{ c.nickname || '匿名' }}</text>
+              <text class="cmt__time">{{ fmtRelative(c.created_at) }}</text>
+            </view>
             <text class="cmt__content">{{ c.content }}</text>
             <text v-if="c.account_id === myAccountId" class="cmt__del" @tap="removeComment(c)">删除</text>
           </view>
+          <view v-if="comments.length && commentLoading" class="sheet__hint">加载中…</view>
+          <view v-else-if="comments.length && !commentHasMore" class="sheet__hint">没有更多评论了</view>
         </scroll-view>
 
         <view class="sheet__input">
@@ -282,11 +291,13 @@ let hlsErrToasted = false;
 const currentItem = computed(() => items.value[current.value]);
 
 /** 评论面板状态 */
+const COMMENT_PAGE_SIZE = 20;
 const commentOpen = ref(false);
 const comments = ref<IComment[]>([]);
 const commentText = ref('');
 const commentLoading = ref(false);
 const commentHasMore = ref(false);
+const commentCursor = ref<string | null>(null);
 const myAccountId = computed(() => getAccountId());
 const activeItem = ref<IVideoItem | null>(null);
 
@@ -366,13 +377,6 @@ const duration = ref(0);
 /** 拖拽中: 位置由手势接管, 不再跟随 timeupdate */
 const dragging = ref(false);
 const dragRatio = ref(0);
-
-/** mm:ss, 超过 1 小时进位到 mm 累加 */
-const fmtTime = (sec: number): string => {
-  const s = Math.max(0, Math.floor(Number(sec) || 0));
-  const m = Math.floor(s / 60);
-  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-};
 
 const displayProgress = computed(() => {
   if (dragging.value) return dragRatio.value;
@@ -664,6 +668,7 @@ const openComments = (item: IVideoItem) => {
   commentOpen.value = true;
   comments.value = [];
   commentHasMore.value = false;
+  commentCursor.value = null;
   void loadComments();
 };
 
@@ -672,15 +677,16 @@ const closeComments = () => {
   commentText.value = '';
 };
 
-const loadComments = async () => {
+const loadComments = async (cursor: string | null = null) => {
   if (!activeItem.value) return;
   commentLoading.value = true;
   try {
-    const data = await fetchVideoComments(activeItem.value.video_id);
-    const list = Array.isArray(data) ? data : (data.items ?? []);
-    comments.value = list as IComment[];
-    // 后端评论接口当前只回 items，没有游标；这里仅展示第一页
-    commentHasMore.value = false;
+    const data = await fetchVideoComments(activeItem.value.video_id, cursor);
+    const list = (Array.isArray(data) ? data : (data.items ?? [])) as IComment[];
+    comments.value = cursor ? [...comments.value, ...list] : list;
+    // 游标 = 本页最旧一条的 comment_id; 返回不足一页即到底
+    commentCursor.value = list.length ? String(list[list.length - 1].comment_id) : null;
+    commentHasMore.value = list.length >= COMMENT_PAGE_SIZE;
   } catch (err: any) {
     toast(err?.detail || '评论加载失败');
   } finally {
@@ -689,7 +695,8 @@ const loadComments = async () => {
 };
 
 const loadMoreComments = () => {
-  // 后端视频评论暂无游标分页，第一页足够展示；留空以扩展
+  if (commentLoading.value || !commentHasMore.value || !commentCursor.value) return;
+  void loadComments(commentCursor.value);
 };
 
 const submitComment = async () => {
@@ -748,6 +755,37 @@ const formatCount = (n?: number | null): string => {
   const v = Number(n) || 0;
   if (v < 10000) return String(v);
   return `${(v / 10000).toFixed(1)}w`;
+};
+
+/** 评论相对时间：刚刚 / n分钟前 / n小时前 / n天前 / 具体日期 */
+const fmtRelative = (iso?: string | null): string => {
+  if (!iso) return '';
+  const t = new Date(iso).getTime();
+  if (!isFinite(t)) return '';
+  const diff = Date.now() - t;
+  const minute = 60 * 1000;
+  if (diff < minute) return '刚刚';
+  if (diff < 60 * minute) return `${Math.floor(diff / minute)}分钟前`;
+  if (diff < 24 * 60 * minute) return `${Math.floor(diff / (60 * minute))}小时前`;
+  if (diff < 7 * 24 * 60 * minute) return `${Math.floor(diff / (24 * 60 * minute))}天前`;
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/** 进度条时间 mm:ss（拖拽气泡用） */
+const fmtTime = (sec: number): string => {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(s / 60);
+  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/** 右上角「我的视频」入口 */
+const goVideoHub = () => {
+  if (!isLoggedIn()) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  uni.navigateTo({url: '/pages/videohub/videohub'});
 };
 
 onLoad(() => {
@@ -879,23 +917,14 @@ onUnload(() => {
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
-/* 底部播放进度条: 时间行 + 轨道 + 拖拽圆点 */
+/* 底部播放进度条: 轨道 + 拖拽圆点 + 拖拽时间气泡 */
 .progress {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
-  padding: 10rpx 0 12rpx;
+  bottom: 44rpx;
+  padding: 20rpx 0;
   z-index: 6;
-}
-
-.progress__time {
-  display: flex;
-  justify-content: space-between;
-  padding: 0 24rpx 8rpx;
-  font-size: 20rpx;
-  color: rgba(255, 255, 255, 0.85);
-  text-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.5);
 }
 
 .progress__track {
@@ -924,6 +953,46 @@ onUnload(() => {
   border-radius: 50%;
   background-color: #ffffff;
   box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.45);
+  transition: transform 0.15s ease;
+}
+
+.progress__dot--big {
+  transform: scale(1.35);
+}
+
+/* 拖拽时圆点上方的时间气泡(translateX(-50%) 居中跟随) */
+.progress__bubble {
+  position: absolute;
+  bottom: 34rpx;
+  padding: 8rpx 20rpx;
+  border-radius: 24rpx;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: #ffffff;
+  font-size: 24rpx;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 顶部右侧操作区: 我的视频 + 声音开关 */
+.topbar {
+  position: fixed;
+  top: calc(20rpx + env(safe-area-inset-top));
+  right: 24rpx;
+  z-index: 31;
+  display: flex;
+  gap: 16rpx;
+}
+
+.topbar__btn {
+  width: 64rpx;
+  height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 32rpx;
+  background-color: rgba(0, 0, 0, 0.4);
+  font-size: 32rpx;
 }
 
 /* H5 端 <video> 被编译成 uni-video 组件, 尺寸样式落在宿主上,
@@ -1103,21 +1172,6 @@ onUnload(() => {
   }
 }
 
-.sound {
-  position: fixed;
-  top: calc(20rpx + env(safe-area-inset-top));
-  right: 24rpx;
-  z-index: 20;
-  width: 64rpx;
-  height: 64rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 32rpx;
-  background-color: rgba(0, 0, 0, 0.4);
-  font-size: 32rpx;
-}
-
 /* 评论抽屉 */
 .sheet-mask {
   position: fixed;
@@ -1183,6 +1237,17 @@ onUnload(() => {
   border-bottom: 1rpx solid #f5f5f5;
   font-size: 28rpx;
   line-height: 1.5;
+}
+
+.cmt__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cmt__time {
+  font-size: 22rpx;
+  color: #bbbbbb;
 }
 
 .cmt__author {
