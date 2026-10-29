@@ -18,8 +18,9 @@ import type {
   IVideoFeedPage,
 } from '@/types';
 
-/** 评论 / 点赞的 target_type：1 = 帖子（后端 Comment.TargetTypeEnum.POST） */
+/** 评论 / 点赞的 target_type：1 = 帖子，2 = 视频（对应后端 Comment.TargetTypeEnum） */
 export const COMMENT_TARGET_POST = 1;
+export const COMMENT_TARGET_VIDEO = 2;
 
 export const apiUrls = {
   // 账号
@@ -45,6 +46,7 @@ export const apiUrls = {
 
   // 评论
   comments: (postId: string) => `/comments/${COMMENT_TARGET_POST}/${postId}/`,
+  commentsFor: (targetType: number, targetId: string) => `/comments/${targetType}/${targetId}/`,
   createComment: () => '/comments/',
   deleteComment: (commentId: string) => `/comments/${commentId}/`,
 
@@ -173,6 +175,10 @@ export const searchPosts = (keyword: string): Promise<IPage<IPost>> => http.get(
 export const fetchComments = (postId: string): Promise<IComment[] | IPage<IComment>> =>
   http.get(apiUrls.comments(postId));
 
+/** 视频评论列表（target_type=2） */
+export const fetchVideoComments = (videoId: string): Promise<IComment[] | IPage<IComment>> =>
+  http.get(apiUrls.commentsFor(COMMENT_TARGET_VIDEO, videoId), {hideError: true});
+
 /** 发评论（评论人由服务端从令牌取） */
 export const createComment = (postId: string, content: string): Promise<IComment> =>
   http.post<IComment>(apiUrls.createComment(), {
@@ -180,6 +186,18 @@ export const createComment = (postId: string, content: string): Promise<IComment
     target_id: postId,
     target_type: COMMENT_TARGET_POST,
   }, {hideError: true});
+
+/** 发视频评论 */
+export const createVideoComment = (videoId: string, content: string): Promise<IComment> =>
+  http.post<IComment>(apiUrls.createComment(), {
+    content,
+    target_id: videoId,
+    target_type: COMMENT_TARGET_VIDEO,
+  }, {hideError: true});
+
+/** 删除评论（视频/帖子共用） */
+export const deleteVideoComment = (commentId: string): Promise<unknown> =>
+  http.del(apiUrls.deleteComment(commentId));
 
 /** 点赞状态 */
 export const fetchLikeState = (postId: string): Promise<ILikeState> => http.get(apiUrls.likeCount(postId));

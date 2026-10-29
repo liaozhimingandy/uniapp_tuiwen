@@ -63,6 +63,7 @@
 
           <!-- 右侧互动栏 -->
           <view class="side">
+            <!-- 头像 + 关注（已关注显示 ✓ 回显） -->
             <view class="side__avatar" @tap.stop="toggleFollow(item)">
               <image
                 v-if="item.author?.avatar_url"
@@ -71,9 +72,28 @@
                 mode="aspectFill"
               />
               <view v-else class="side__img side__img--ph">@</view>
-              <view class="side__plus">+</view>
+              <view v-if="!isFollowed(item)" class="side__plus">+</view>
+              <view v-else class="side__plus side__plus--on">✓</view>
             </view>
             <text class="side__name">{{ item.author?.nickname || '匿名' }}</text>
+
+            <!-- 点赞（后端暂无视频点赞接口，本地乐观切换，待后端补端点） -->
+            <view class="side__btn" @tap.stop="toggleLike(item)">
+              <text class="side__icon" :class="{'side__icon--on': item.interaction?.liked}">{{ item.interaction?.liked ? '❤️' : '🤍' }}</text>
+              <text class="side__num">{{ formatCount(item.stats?.like_count) }}</text>
+            </view>
+
+            <!-- 评论（打开底部评论面板） -->
+            <view class="side__btn" @tap.stop="openComments(item)">
+              <text class="side__icon">💬</text>
+              <text class="side__num">{{ formatCount(item.stats?.comment_count) }}</text>
+            </view>
+
+            <!-- 分享 -->
+            <view class="side__btn" @tap.stop="share(item)">
+              <text class="side__icon">↗</text>
+              <text class="side__num">分享</text>
+            </view>
           </view>
 
           <!-- 底部文案 -->
@@ -92,6 +112,38 @@
       <text>{{ soundOn ? '🔊' : '🔇' }}</text>
     </view>
     <!-- #endif -->
+
+    <!-- 评论面板（底部抽屉） -->
+    <view v-if="commentOpen" class="sheet-mask" @tap="closeComments">
+      <view class="sheet" @tap.stop>
+        <view class="sheet__bar" />
+        <view class="sheet__head">
+          <text class="sheet__title">评论 {{ formatCount(activeItem?.stats?.comment_count) }}</text>
+          <text class="sheet__close" @tap="closeComments">✕</text>
+        </view>
+
+        <scroll-view class="sheet__list" scroll-y @scrolltolower="loadMoreComments">
+          <view v-if="commentLoading && comments.length === 0" class="sheet__hint">加载中…</view>
+          <view v-else-if="comments.length === 0" class="sheet__hint">还没有评论，来抢沙发</view>
+          <view v-for="c in comments" :key="c.comment_id" class="cmt">
+            <text class="cmt__author">{{ c.nickname || '匿名' }}：</text>
+            <text class="cmt__content">{{ c.content }}</text>
+            <text v-if="c.account_id === myAccountId" class="cmt__del" @tap="removeComment(c)">删除</text>
+          </view>
+        </scroll-view>
+
+        <view class="sheet__input">
+          <input
+            v-model="commentText"
+            class="sheet__field"
+            placeholder="说点什么…"
+            :adjust-position="true"
+            @confirm="submitComment"
+          />
+          <view class="sheet__send" @tap="submitComment">发送</view>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
@@ -104,7 +156,13 @@
  * - H5：用原生 `<video>`，m3u8 走 hls.js 兜底（Chrome 不原生支持 HLS）
  *
  * 免登录：后端 `/videos/feed/` 在公开路由组，未登录也能拉取；
- * 关注按钮在没登录时跳登录页。
+ * 关注 / 评论 / 分享 在没登录时跳登录页或引导登录。
+ *
+ * 互动：
+ * - 关注：复用 /follows/，以后端返回的 interaction.followed 做已关注态回显
+ * - 评论：复用 /comments/，target_type=2(VIDEO)，底部抽屉展示与发布
+ * - 点赞：后端暂无视频点赞端点，这里做本地乐观切换（含计数 ±1），待后端补接口
+ * - 分享：复制链接到剪贴板（如宿主支持则唤起系统分享）
  *
  * 分页：游标分页，`next_cursor` 为空即到底；滚动到倒数第 2 条时预取下一页。
  */
@@ -113,11 +171,11 @@ import {onLoad, onUnload} from '@dcloudio/uni-app';
 // #ifdef H5
 import Hls from 'hls.js';
 // #endif
-import {fetchVideoFeed, follow} from '@/api';
-import {staticLink} from '@/config';
-import {isLoggedIn} from '@/utils/token';
+import {fetchVideoFeed, follow, unfollow, fetchVideoComments, createVideoComment, deleteVideoComment} from '@/api';
+import {staticLink, config} from '@/config';
+import {isLoggedIn, getAccountId} from '@/utils/token';
 import {LOGIN_PAGE, toast} from '@/api/request';
-import type {IVideoItem} from '@/types';
+import type {IVideoItem, IComment} from '@/types';
 
 const items = ref<IVideoItem[]>([]);
 const current = ref(0);
@@ -136,7 +194,15 @@ const hlsReady = new Set<number>();
 
 const currentItem = computed(() => items.value[current.value]);
 
-/** 取某条视频的播放器（H5 用 DOM，其它用视频上下文） */
+/** 评论面板状态 */
+const commentOpen = ref(false);
+const comments = ref<IComment[]>([]);
+const commentText = ref('');
+const commentLoading = ref(false);
+const commentHasMore = ref(false);
+const myAccountId = computed(() => getAccountId());
+const activeItem = ref<IVideoItem | null>(null);
+
 const getPlayer = (idx: number): any => {
   // #ifdef H5
   return document.getElementById('hv' + idx);
@@ -147,7 +213,6 @@ const getPlayer = (idx: number): any => {
 };
 
 const playIdx = (idx: number) => {
-  // 暂停其它条目
   items.value.forEach((_, i) => {
     if (i !== idx) getPlayer(i)?.pause?.();
   });
@@ -161,9 +226,6 @@ const playIdx = (idx: number) => {
 };
 
 // #ifdef H5
-/**
- * m3u8 在 Chrome 上需要 hls.js；Safari 原生支持则直接赋值 src。
- */
 const setupHls = (idx: number, el: HTMLVideoElement) => {
   const item = items.value[idx];
   if (!item?.play_url?.endsWith('.m3u8')) return;
@@ -190,7 +252,6 @@ const onPlay = () => {
   playing.value = true;
 };
 const onPause = () => {
-  // 只有当前条才更新"暂停图标"
   playing.value = false;
 };
 
@@ -222,10 +283,11 @@ const toggleSound = () => {
 const onChange = (e: {detail: {current: number}}) => {
   current.value = e.detail.current;
   playIdx(current.value);
-  // 滑到倒数第二条时预取下一页
   if (hasMore.value && !loading.value && current.value >= items.value.length - 2) {
     void loadMore();
   }
+  // 切换视频时若评论面板开着，关掉以免串内容
+  if (commentOpen.value) closeComments();
 };
 
 const loadMore = async () => {
@@ -255,16 +317,132 @@ const reload = () => {
   void loadMore();
 };
 
-/** 关注作者（没登录跳登录页） */
+// ----------------------------- 互动：关注 -----------------------------
+
+/** 是否已关注（后端 interaction.followed 回显，未登录恒为 false） */
+const isFollowed = (item: IVideoItem): boolean => Boolean(item.interaction?.followed);
+
 const toggleFollow = (item: IVideoItem) => {
   if (!isLoggedIn()) {
     uni.navigateTo({url: LOGIN_PAGE});
     return;
   }
-  if (!item.author?.account_id) return;
-  void follow(item.author.account_id)
-    .then(() => toast('已关注'))
-    .catch((err: any) => toast(err?.detail || '关注失败'));
+  const accountId = item.author?.account_id;
+  if (!accountId) return;
+  const followed = isFollowed(item);
+  // 乐观更新：先切 UI，失败再回滚
+  if (item.interaction) item.interaction.followed = !followed;
+  const req = followed ? unfollow(accountId) : follow(accountId);
+  req
+    .then(() => toast(followed ? '已取消关注' : '已关注'))
+    .catch((err: any) => {
+      if (item.interaction) item.interaction.followed = followed; // 回滚
+      toast(err?.detail || '操作失败');
+    });
+};
+
+// ----------------------------- 互动：点赞（本地乐观） -----------------------------
+
+const toggleLike = (item: IVideoItem) => {
+  // 后端暂无视频点赞端点，仅本地切换 + 计数 ±1
+  if (!item.interaction) item.interaction = {};
+  if (!item.stats) item.stats = {view_count: 0, like_count: 0, comment_count: 0, share_count: 0};
+  const liked = !item.interaction.liked;
+  item.interaction.liked = liked;
+  item.stats.like_count = Math.max(0, (item.stats.like_count || 0) + (liked ? 1 : -1));
+};
+
+// ----------------------------- 互动：评论 -----------------------------
+
+const openComments = (item: IVideoItem) => {
+  activeItem.value = item;
+  commentOpen.value = true;
+  comments.value = [];
+  commentHasMore.value = false;
+  void loadComments();
+};
+
+const closeComments = () => {
+  commentOpen.value = false;
+  commentText.value = '';
+};
+
+const loadComments = async () => {
+  if (!activeItem.value) return;
+  commentLoading.value = true;
+  try {
+    const data = await fetchVideoComments(activeItem.value.video_id);
+    const list = Array.isArray(data) ? data : (data.items ?? []);
+    comments.value = list as IComment[];
+    // 后端评论接口当前只回 items，没有游标；这里仅展示第一页
+    commentHasMore.value = false;
+  } catch (err: any) {
+    toast(err?.detail || '评论加载失败');
+  } finally {
+    commentLoading.value = false;
+  }
+};
+
+const loadMoreComments = () => {
+  // 后端视频评论暂无游标分页，第一页足够展示；留空以扩展
+};
+
+const submitComment = async () => {
+  const text = commentText.value.trim();
+  if (!text) return;
+  if (!isLoggedIn()) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  if (!activeItem.value) return;
+  try {
+    const created = await createVideoComment(activeItem.value.video_id, text);
+    comments.value = [created, ...comments.value];
+    if (activeItem.value.stats) activeItem.value.stats.comment_count = (activeItem.value.stats.comment_count || 0) + 1;
+    commentText.value = '';
+    toast('评论成功');
+  } catch (err: any) {
+    toast(err?.detail || '评论失败');
+  }
+};
+
+const removeComment = async (c: IComment) => {
+  try {
+    await deleteVideoComment(String(c.comment_id));
+    comments.value = comments.value.filter((x) => x.comment_id !== c.comment_id);
+    if (activeItem.value?.stats) {
+      activeItem.value.stats.comment_count = Math.max(0, (activeItem.value.stats.comment_count || 0) - 1);
+    }
+  } catch (err: any) {
+    toast(err?.detail || '删除失败');
+  }
+};
+
+// ----------------------------- 互动：分享 -----------------------------
+
+const share = (item: IVideoItem) => {
+  const link = `${config.APP_BASE_URL}/v/${item.video_id}/`;
+  // #ifdef H5
+  if (navigator?.clipboard) {
+    navigator.clipboard.writeText(link).then(
+      () => toast('链接已复制'),
+      () => toast('复制失败'),
+    );
+    return;
+  }
+  // #endif
+  uni.setClipboardData({
+    data: link,
+    success: () => toast('链接已复制'),
+    fail: () => toast('复制失败'),
+  });
+};
+
+/** 计数格式化：过万显示 1.2w */
+const formatCount = (n?: number | null): string => {
+  const v = Number(n) || 0;
+  if (v < 10000) return String(v);
+  return `${(v / 10000).toFixed(1)}w`;
 };
 
 onLoad(() => {
@@ -373,6 +551,10 @@ onUnload(() => {
   text-align: center;
 }
 
+.side__plus--on {
+  background-color: #888888;
+}
+
 .side__name {
   margin-top: 12rpx;
   max-width: 160rpx;
@@ -382,6 +564,30 @@ onUnload(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.side__btn {
+  margin-top: 36rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.side__icon {
+  font-size: 52rpx;
+  line-height: 1;
+  filter: drop-shadow(0 2rpx 6rpx rgba(0, 0, 0, 0.4));
+}
+
+.side__icon--on {
+  transform: scale(1.05);
+}
+
+.side__num {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #ffffff;
+  text-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.5);
 }
 
 .meta {
@@ -461,5 +667,113 @@ onUnload(() => {
   border-radius: 32rpx;
   background-color: rgba(0, 0, 0, 0.4);
   font-size: 32rpx;
+}
+
+/* 评论抽屉 */
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  z-index: 99;
+}
+
+.sheet {
+  width: 100%;
+  height: 70vh;
+  background-color: #ffffff;
+  border-radius: 24rpx 24rpx 0 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.sheet__bar {
+  width: 64rpx;
+  height: 8rpx;
+  border-radius: 4rpx;
+  background-color: #dddddd;
+  margin: 16rpx auto 0;
+}
+
+.sheet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20rpx 28rpx;
+  border-bottom: 1rpx solid #f0f0f0;
+}
+
+.sheet__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #333333;
+}
+
+.sheet__close {
+  font-size: 32rpx;
+  color: #999999;
+  padding: 0 8rpx;
+}
+
+.sheet__list {
+  flex: 1;
+  padding: 12rpx 28rpx;
+}
+
+.sheet__hint {
+  margin-top: 60rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: #999999;
+}
+
+.cmt {
+  padding: 18rpx 0;
+  border-bottom: 1rpx solid #f5f5f5;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+.cmt__author {
+  color: #576b95;
+}
+
+.cmt__content {
+  color: #333333;
+}
+
+.cmt__del {
+  margin-left: 16rpx;
+  font-size: 24rpx;
+  color: #fe2c55;
+}
+
+.sheet__input {
+  display: flex;
+  align-items: center;
+  padding: 16rpx 24rpx;
+  border-top: 1rpx solid #f0f0f0;
+}
+
+.sheet__field {
+  flex: 1;
+  height: 72rpx;
+  padding: 0 24rpx;
+  border-radius: 36rpx;
+  background-color: #f5f5f5;
+  font-size: 28rpx;
+}
+
+.sheet__send {
+  margin-left: 20rpx;
+  padding: 0 32rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  border-radius: 36rpx;
+  background-color: #fe2c55;
+  color: #ffffff;
+  font-size: 28rpx;
 }
 </style>

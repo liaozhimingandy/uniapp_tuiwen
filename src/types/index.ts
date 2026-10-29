@@ -55,6 +55,8 @@ export interface IComment {
   parent_id?: string | null;
   content: string;
   account_id: string;
+  /** 评论者昵称（后端可能不回传，缺省按"匿名"显示） */
+  nickname?: string | null;
   target_id: string;
   target_type: number;
   created_at?: string | null;
