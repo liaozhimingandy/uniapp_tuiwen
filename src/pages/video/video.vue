@@ -194,7 +194,7 @@
  *
  * 分页：游标分页，`next_cursor` 为空即到底；滚动到倒数第 2 条时预取下一页。
  */
-import {computed, ref} from 'vue';
+import {computed, reactive, ref} from 'vue';
 import {onLoad, onUnload} from '@dcloudio/uni-app';
 // #ifdef H5
 import Hls from 'hls.js';
@@ -217,7 +217,9 @@ interface FeedState {
   error: boolean;
 }
 const newFeedState = (): FeedState => ({items: [], cursor: null, feedId: null, hasMore: true, loaded: false, error: false});
-const feeds: Record<FeedTab, FeedState> = {rec: newFeedState(), follow: newFeedState()};
+// 必须用 reactive: 普通对象上 st.items = [...] 赋值不触发 computed 重算,
+// 会出现"接口有数据、页面一直显示暂无视频"的假死
+const feeds = reactive<Record<FeedTab, FeedState>>({rec: newFeedState(), follow: newFeedState()});
 
 const tab = ref<FeedTab>('rec');
 const current = ref(0);
