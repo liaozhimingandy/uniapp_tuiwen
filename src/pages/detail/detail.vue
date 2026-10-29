@@ -82,7 +82,8 @@ import ImageGrid from '@/components/ImageGrid.vue';
 import {createComment, deletePost, fetchComments, fetchLikeState, fetchPost, likePost, unlikePost} from '@/api';
 import {useAccountStore, useUserCacheStore} from '@/stores/account';
 import {formatSmartTime} from '@/utils/datetime';
-import {contentImages, contentText, looksLikeHtml} from '@/utils/text';
+import {absolutizeHtml, contentImages, contentText, looksLikeHtml} from '@/utils/text';
+import {config} from '@/config';
 import {isLoggedIn} from '@/utils/token';
 import {LOGIN_PAGE, toast} from '@/api/request';
 import type {IComment, IPost} from '@/types';
@@ -105,8 +106,8 @@ const authorAvatar = computed(() => author.value?.avatar || '');
 
 const bodyText = computed(() => contentText(post.value?.content));
 const isHtml = computed(() => looksLikeHtml(bodyText.value));
-/** rich-text 需要字符串形式的 HTML，后端可能返回带样式的段落 */
-const bodyHtml = computed(() => bodyText.value);
+/** rich-text 需要字符串形式的 HTML；相对图片地址在这里补成 CDN 绝对地址 */
+const bodyHtml = computed(() => absolutizeHtml(bodyText.value, config.CDN_BASE_URL));
 const images = computed(() => contentImages(post.value?.content));
 const timeText = computed(() => formatSmartTime(post.value?.created_at));
 

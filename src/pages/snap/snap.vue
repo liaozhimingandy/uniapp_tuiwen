@@ -519,6 +519,10 @@ onReachBottom(() => {
   position: fixed;
   right: 36rpx;
   bottom: calc(48rpx + env(safe-area-inset-bottom));
+  /* #ifdef H5 */
+  /* 同首页：H5 的 tabBar 是固定覆盖层，FAB 要让开 */
+  bottom: calc(48rpx + 50px + env(safe-area-inset-bottom));
+  /* #endif */
   width: 104rpx;
   height: 104rpx;
   border-radius: 52rpx;
@@ -541,7 +545,8 @@ onReachBottom(() => {
   background-color: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: flex-end;
-  z-index: 99;
+  /* 高于 H5 的 tabBar（z-index 998）：否则底部的发布按钮会被导航栏盖住 */
+  z-index: 999;
 }
 
 .sheet {

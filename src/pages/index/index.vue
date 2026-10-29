@@ -226,6 +226,10 @@ onReachBottom(() => {
   position: fixed;
   right: 36rpx;
   bottom: calc(48rpx + env(safe-area-inset-bottom));
+  /* #ifdef H5 */
+  /* H5 的 tabBar 是 position:fixed 覆盖层（z-index 998），固定的 FAB 会被压在下面 */
+  bottom: calc(48rpx + 50px + env(safe-area-inset-bottom));
+  /* #endif */
   width: 104rpx;
   height: 104rpx;
   border-radius: 52rpx;

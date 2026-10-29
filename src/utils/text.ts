@@ -37,6 +37,19 @@ export function looksLikeHtml(text?: string | null): boolean {
 }
 
 /**
+ * 把 HTML 里的相对图片地址补成绝对地址
+ *
+ * 后端富文本里的 `<img src="/media/xxx.png">` 是相对路径，
+ * 而 H5 站点域名与接口域名不同、小程序更是没有"当前站点"概念，
+ * 不补全就是一片裂图。只在 rich-text 渲染前调用。
+ */
+export function absolutizeHtml(html: string, cdnBase: string): string {
+  if (!html) return '';
+  const base = cdnBase.replace(/\/+$/, '');
+  return html.replace(/(src|href)=(["'])\/(?!\/)/gi, (_match, attr, quote) => `${attr}=${quote}${base}/`);
+}
+
+/**
  * 解析图片字段
  *
  * 后端既有格式是逗号分隔的相对路径串（`/media/a.png,/media/b.png`），
