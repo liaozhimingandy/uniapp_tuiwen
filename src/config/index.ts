@@ -90,9 +90,21 @@ export function getApiBaseUrl(): string {
   return getCustomApiBaseUrl() || config.ENV_API_BASE_URL;
 }
 
+/** 静态资源基地址: 用户自定义服务器地址(剥掉 /api/v2 前缀) > env CDN 配置 */
+function getStaticBaseUrl(): string {
+  const custom = getCustomApiBaseUrl();
+  if (custom) {
+    // 自定义地址约定为完整 API 前缀(含 /api/v2, 请求层直接拼路径),
+    // 但后端静态文件挂载在根路径 /static(不在 /api/v2 下), 拼媒体地址前要剥掉
+    return custom.replace(/\/api\/v\d+\/?$/, '');
+  }
+  return config.CDN_BASE_URL;
+}
+
 /** 把后端返回的相对路径拼成完整静态资源地址 */
 export function staticLink(path?: string | null): string {
   if (!path) return '';
   if (/^https?:\/\//i.test(path)) return path;
-  return `${config.CDN_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+  const base = getStaticBaseUrl();
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 }

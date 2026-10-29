@@ -235,6 +235,8 @@ const loadError = computed(() => state.value.error);
 /** 已挂载 hls 实例，避免重复创建 */
 const hlsMap = new Map<number, Hls>();
 const hlsReady = new Set<number>();
+/** 播放失败提示只弹一次，避免滑动刷屏 */
+let hlsErrToasted = false;
 // #endif
 
 const currentItem = computed(() => items.value[current.value]);
@@ -289,6 +291,15 @@ const setupHls = (idx: number, el: HTMLVideoElement) => {
     }
     if (Hls.isSupported()) {
       const hls = new Hls();
+      // 播放失败不再静默: 致命错误(清单404/网络/CORS)给出提示, 便于定位
+      hls.on(Hls.Events.ERROR, (_evt: string, data: any) => {
+        if (!data?.fatal) return;
+        console.warn('[video] HLS 加载失败:', data.type, data.details);
+        if (!hlsErrToasted) {
+          hlsErrToasted = true;
+          toast('视频加载失败，请检查网络');
+        }
+      });
       hls.loadSource(src);
       hls.attachMedia(el);
       hlsMap.set(idx, hls);
