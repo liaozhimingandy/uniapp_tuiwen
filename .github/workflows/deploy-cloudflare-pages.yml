@@ -1,28 +1,24 @@
 name: Deploy H5 to Cloudflare Pages
 
 # =============================================================================
-# GitHub 构建 H5 → 官方 pages-action 部署到 Cloudflare Pages 项目 tuiwen-h5。
+# 用 GitHub Actions 构建 H5，再把静态产物部署到 Cloudflare Pages（Direct Upload）。
 #
-# 架构取舍（沿用验证过的做法，坑都已绕开）：
-#   1. Cloudflare 不参与构建 —— 由 GitHub Actions 用仓库锁定的 Node/npm 构建，
-#      避免 Cloudflare 自建集成（如强套 Vite 版本）导致的构建报错。
-#   2. 不用 Cloudflare 的 "部署命令" 字段 —— 走 API Token 部署，干净可控。
-#   3. manifest.json 的 H5 路由是 history 模式（分享链接形如 /v/{video_id}/），
-#      依赖 Pages 的自动 SPA fallback：产物根目录有 index.html 时，未命中静态
-#      资源的路径自动 200 返回 index.html。因此**不要**在产物里放
-#      `_redirects`（`/* /index.html 200` 会劫持 /assets/*.js 等静态资源）。
+# 为什么不让 Cloudflare 自己构建：
+#   1. Cloudflare 连 Git 时强套 Vite 集成，会因 Node/Vite 版本判定报错；
+#   2. 它的「部署命令」字段会额外跑一次 wrangler，报 Authentication error [code: 10000]。
+#   由 GitHub 用仓库里锁定的 Node 22 + package-lock 构建，环境可控、可复现。
 #
-# 前置（一次性，已完成）：
-#   - 仓库 Settings → Secrets and variables → Actions：
+# 前置（一次性）：
+#   - Cloudflare Pages 项目用 "Direct Upload" 创建（不要 Connect to Git）；
+#   - 仓库 Settings → Secrets 增加：
 #       CLOUDFLARE_API_TOKEN   （Account 级 "Cloudflare Pages: Edit" 权限）
-#       CLOUDFLARE_ACCOUNT_ID
-#   - Pages 项目 tuiwen-h5 首次部署时由本 workflow 自动创建（Direct Upload）。
+#       CLOUDFLARE_ACCOUNT_ID  （Cloudflare 账户 ID）
+#   未配置时本工作流只构建不部署，不会让 main 变成红叉。
 #
-# 自定义域名：h5.tuiwen.alsoapp.com 在 Pages 项目设置里绑定（Custom domains）。
+# 自定义域名 h5.tuiwen.alsoapp.com 在 Pages 项目设置里绑定（Custom domains）。
 # =============================================================================
-
 on:
-  # 仅 main 分支、且前端相关文件有变化时触发，避免无关改动重复部署
+  # 只在 main 且前端产物相关文件变化时部署，避免无关改动触发
   push:
     branches: [main]
     paths:
@@ -30,77 +26,116 @@ on:
       - 'public/**'
       - 'index.html'
       - 'vite.config.ts'
-      - 'tsconfig.json'
-      - '.env*'
+      # tsconfig 会直接影响 vue-tsc 与产物（build 脚本里先跑 type-check）
+      - 'tsconfig*.json'
       - 'package.json'
       - 'package-lock.json'
+      - '.env.production'
       - '.github/workflows/deploy-cloudflare-pages.yml'
-  # 手动触发（发版兜底 / 重试部署）
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# 同一时刻只允许一个部署在跑，排队不并发
 concurrency:
-  group: deploy-cloudflare-pages
-  cancel-in-progress: false
+  group: deploy-pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  # Cloudflare Pages 项目名（Direct Upload 首次部署时自动创建）
+  CF_PAGES_PROJECT: tuiwen-h5
 
 jobs:
   build-and-deploy:
-    name: Build H5 & deploy
+    name: 构建并部署到 Cloudflare Pages
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
-      - name: Checkout
+      - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Setup Node.js
+      - name: 配置 Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
+          cache-dependency-path: package-lock.json
 
-      # npm ci 要求 lockfile 与 package.json 严格一致
-      - name: Install dependencies
+      # 严格按 lockfile 安装（只用一次：原文件里重复 install 了两次）
+      - name: 安装依赖
         run: npm ci --no-audit --no-fund
 
-      # 部署前再过一次类型检查，防止带病上线
-      - name: Type check
-        run: npm run type-check
-
-      # 构建号注入产物，便于线上排查对应到哪次提交
-      - name: Compute version
+      # 构建号 = 提交短哈希，注入产物便于排查线上版本
+      - name: 计算版本与构建号
         id: ver
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Build H5
+      - name: 构建 H5
         env:
-          VITE_APP_VERSION: ${{ steps.ver.outputs.version }}
           VITE_APP_BUILD: ${{ github.sha }}
-        run: npm run build:h5
+        run: |
+          set -euo pipefail
+          npm run build:h5
+          # SPA 深链刷新兜底：Cloudflare Pages 会把未命中静态资源的路径回退到 404.html，
+          # 这里把 404.html 复制成 index.html 的副本，使 history 路由的分享链接（如 /v/{id}/）也能正确渲染。
+          cp dist/build/h5/index.html dist/build/h5/404.html
+
+      - name: 上传构建产物（留档，方便排查线上到底是哪次构建）
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-cloudflare-${{ github.sha }}
+          path: dist
+          retention-days: 7
+
+      - name: 检查部署凭据
+        id: creds
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "${CF_TOKEN:-}" ] && [ -n "${CF_ACCOUNT:-}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=跳过部署::未配置 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID，本次只构建不部署"
+          fi
 
       # 用 wrangler CLI 直接部署，不依赖第三方 action 的版本
       # 固定大版本 4：wrangler 3 已被 npm 标为 legacy（dist-tag: legacy=3.114.x），
       # 新版 Cloudflare API 只保证 4.x 兼容；pages deploy 的这几个参数在 4.x 未变。
-      # 仅当仓库已配置 Cloudflare Secrets 时才部署；未配置则跳过并提示（不影响构建/类型检查）。
       - name: 部署到 Cloudflare Pages
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        if: steps.creds.outputs.ready == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           npx --yes wrangler@4 pages deploy dist/build/h5 \
-            --project-name="tuiwen-h5" \
+            --project-name="${CF_PAGES_PROJECT}" \
             --branch="${GITHUB_REF_NAME}" \
             --commit-hash="${GITHUB_SHA}" \
             --commit-dirty=false
 
-      - name: 提示未配置 Cloudflare Secrets
-        if: ${{ !(secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '') }}
+      - name: 写入摘要
+        if: always()
+        env:
+          DEPLOYED: ${{ steps.creds.outputs.ready }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD: ${{ steps.ver.outputs.build }}
         run: |
-          echo "::warning::未检测到 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID，已跳过 Cloudflare Pages 部署。"
-          echo "请在仓库 Settings → Secrets and variables → Actions 中添加这两个 Secret 后重新推送。"
-
+          {
+            echo "## Cloudflare Pages"
+            echo ""
+            echo "| 项目 | 值 |"
+            echo "| --- | --- |"
+            echo "| 版本 | ${VERSION:-未知} |"
+            echo "| 构建号 | ${BUILD:-未知} |"
+            echo "| 是否部署 | ${DEPLOYED}（false 表示未配置凭据，仅构建） |"
+            echo "| 项目名 | ${CF_PAGES_PROJECT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
