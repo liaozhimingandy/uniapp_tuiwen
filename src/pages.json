@@ -101,6 +101,12 @@
       "style": {
         "navigationBarTitleText": "关注"
       }
+    },
+    {
+      "path": "pages/notification/notification",
+      "style": {
+        "navigationBarTitleText": "通知设置"
+      }
     }
   ],
   "globalStyle": {

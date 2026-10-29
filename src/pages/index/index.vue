@@ -7,8 +7,8 @@
     </view>
 
     <!-- 新内容提示条：轮询发现新帖时浮在顶部，点一下插入列表 -->
-    <view v-if="pendingPosts.length" class="newbar" @tap="applyPending">
-      <text>{{ pendingPosts.length }} 条新内容，点击查看</text>
+    <view v-if="pendingPosts.length && newContentAlert" class="newbar" @tap="applyPending">
+      <text>{{ pendingPosts.length }} 条新内容，点击查看 ›</text>
     </view>
 
     <view v-if="posts.length === 0 && !loading" class="empty">
@@ -39,13 +39,17 @@
  *   不打断用户正在看的位置（直接插到顶部会让列表跳动）
  */
 import {computed, ref} from 'vue';
-import {onPullDownRefresh, onReachBottom, onShow} from '@dcloudio/uni-app';
+import {onHide, onPullDownRefresh, onReachBottom, onShow, onUnload} from '@dcloudio/uni-app';
 import PostCard from '@/components/PostCard.vue';
 import LoadMore from '@/components/LoadMore.vue';
 import {fetchLatestPosts, fetchPosts} from '@/api';
 import {useAccountStore, usePostStore} from '@/stores/account';
+import {getNotificationSettings} from '@/utils/notification';
 import type {IPost} from '@/types';
 import {LOGIN_PAGE, toast} from '@/api/request';
+
+/** 轮询间隔：每 30s 拉一次最新，发现新帖才提示（不打断浏览） */
+const POLL_INTERVAL = 30_000;
 
 const accountStore = useAccountStore();
 const postStore = usePostStore();
@@ -57,6 +61,10 @@ const loadingMore = ref(false);
 const hasMore = ref(true);
 /** 本地没有的最新帖子 */
 const pendingPosts = ref<IPost[]>([]);
+/** 是否允许浮出"新内容"提示（受通知设置控制） */
+const newContentAlert = ref(true);
+/** 轮询定时器（离开页面必须清掉，否则后台一直打接口） */
+let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 const loadStatus = computed<'idle' | 'loading' | 'nomore'>(() => {
   if (loadingMore.value) return 'loading';
@@ -143,12 +151,36 @@ const goPublish = () => {
 
 onShow(() => {
   // 未登录也能展示公开推文：首屏加载、有内容后再轮询"新内容"提示条
+  const settings = getNotificationSettings();
+  newContentAlert.value = settings.newContentAlert;
   if (posts.value.length === 0) {
     void refresh(true);
-    return;
+  } else {
+    void checkLatest();
   }
-  void checkLatest();
+  // 开启"新内容提醒"才轮询，离开页面会停掉
+  startPolling(settings.newContentAlert);
 });
+
+/** 启动轮询（先清旧的，避免来回切换页面重复挂定时器） */
+const startPolling = (enabled: boolean) => {
+  stopPolling();
+  if (!enabled) return;
+  pollTimer = setInterval(() => {
+    void checkLatest();
+  }, POLL_INTERVAL);
+};
+
+/** 停止轮询 */
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+};
+
+onHide(stopPolling);
+onUnload(stopPolling);
 
 onPullDownRefresh(() => {
   void refresh();
@@ -189,13 +221,18 @@ onReachBottom(() => {
 
 .newbar {
   position: sticky;
-  top: 0;
-  z-index: 10;
-  padding: 16rpx 0;
+  top: 16rpx;
+  z-index: 20;
+  margin: 16rpx auto;
+  width: fit-content;
+  max-width: 84%;
+  padding: 14rpx 32rpx;
+  border-radius: 999rpx;
   text-align: center;
   font-size: 25rpx;
-  color: $brand;
-  background-color: $brand-light;
+  color: #ffffff;
+  background-color: $brand;
+  box-shadow: 0 6rpx 18rpx rgba(2, 122, 255, 0.35);
 }
 
 .fab {

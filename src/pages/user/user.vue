@@ -1,64 +1,99 @@
 <template>
   <view class="page">
-    <!-- 头部资料 -->
-    <view class="profile">
-      <view class="profile__row">
-        <UserAvatar :name="displayName" :src="profile?.avatar" :size="128" />
-        <view class="profile__info">
-          <text class="profile__name ellipsis">{{ displayName }}</text>
-          <text class="profile__id">@{{ profile?.username }}</text>
+    <!-- 头部资料（抖音风格） -->
+    <view class="header">
+      <view class="header__top">
+        <UserAvatar :name="displayName" :src="profile?.avatar" :size="140" />
+        <view class="header__info">
+          <text class="header__name ellipsis">{{ displayName }}</text>
+          <text class="header__id">抖音号：@{{ profile?.username }}</text>
+          <text v-if="profile?.bio" class="header__bio ellipsis-2">{{ profile.bio }}</text>
         </view>
       </view>
 
-      <text v-if="profile?.bio" class="profile__bio">{{ profile.bio }}</text>
-
+      <!-- 统计 -->
       <view class="stats">
         <view class="stats__item" @tap="goFollow('followee')">
-          <text class="stats__num">{{ followeeCount }}</text>
+          <text class="stats__num">{{ formatCount(followeeCount) }}</text>
           <text class="stats__label">关注</text>
         </view>
         <view class="stats__item" @tap="goFollow('follower')">
-          <text class="stats__num">{{ followerCount }}</text>
+          <text class="stats__num">{{ formatCount(followerCount) }}</text>
           <text class="stats__label">粉丝</text>
         </view>
-      </view>
-
-      <view v-if="!isSelf" class="actions">
-        <view class="follow-btn" :class="{'follow-btn--on': isFollowing}" @tap="toggleFollow">
-          {{ isFollowing ? '已关注' : '+ 关注' }}
+        <view class="stats__item" @tap="goWorks">
+          <text class="stats__num">{{ formatCount(worksCount) }}</text>
+          <text class="stats__label">作品</text>
         </view>
       </view>
+
+      <!-- 操作 -->
+      <view class="actions">
+        <template v-if="isSelf">
+          <view class="btn btn--ghost" @tap="gotoSettings">编辑资料</view>
+        </template>
+        <template v-else>
+          <view class="btn" :class="isFollowing ? 'btn--ghost' : 'btn--brand'" @tap="toggleFollow">
+            {{ isFollowing ? '已关注' : '+ 关注' }}
+          </view>
+          <view class="btn btn--ghost" @tap="onMessage">私信</view>
+        </template>
+      </view>
     </view>
 
-    <!-- 动态列表 -->
-    <view class="section-title">
-      <text>TA 的动态</text>
+    <!-- 作品 / 喜欢 标签栏 -->
+    <view class="tabs">
+      <view class="tabs__item" :class="{'tabs__item--on': tab === 'works'}" @tap="tab = 'works'">
+        <text>作品</text>
+      </view>
+      <view class="tabs__item" :class="{'tabs__item--on': tab === 'likes'}" @tap="tab = 'likes'">
+        <text>喜欢</text>
+      </view>
     </view>
 
-    <view v-if="posts.length === 0 && !loading" class="empty">还没有发布内容</view>
+    <!-- 作品网格 -->
+    <view v-if="tab === 'works'" class="works">
+      <view v-if="posts.length === 0 && !loading" class="works__empty">还没有发布作品</view>
+      <view
+        v-for="item in posts"
+        :key="item.post_id"
+        class="work"
+        @tap="goDetail(item)"
+      >
+        <image v-if="coverOf(item)" :src="coverOf(item)" class="work__img" mode="aspectFill" />
+        <view v-else class="work__text">
+          <text class="work__text-inner">{{ textOf(item) }}</text>
+        </view>
+        <view v-if="imagesCountOf(item) > 1" class="work__badge">{{ imagesCountOf(item) }}图</view>
+      </view>
 
-    <PostCard v-for="item in posts" :key="item.post_id" :post="item" />
+      <LoadMore v-if="posts.length > 0" :status="loadStatus" @refresh="loadPosts" />
+    </view>
 
-    <LoadMore v-if="posts.length > 0" :status="loadStatus" @refresh="loadPosts" />
+    <!-- 喜欢（暂无后端支持，展示空态） -->
+    <view v-else class="works">
+      <view class="works__empty">该用户暂未公开喜欢的内容</view>
+    </view>
   </view>
 </template>
 
 <script setup lang="ts">
 /**
- * 用户主页（自己 / 他人同一套页面）
+ * 个人主页（抖音风格）
  *
- * 为什么要区分 isSelf：
- * 自己的页面不显示关注按钮（关注自己无意义，后端也会拒绝），
- * 但统计、动态列表完全一致，所以不做两个页面。
+ * 头部：大头像 + 昵称 + 抖音号(@username) + 简介 + 关注/粉丝/作品 统计 + 操作按钮；
+ * 下方：作品 / 喜欢 标签栏，作品以三列网格展示（抖音默认布局）。
+ *
+ * 为什么区分 isSelf：自己的页面不显示关注按钮，但统计、作品列表完全一致，不做两个页面。
  */
 import {computed, ref} from 'vue';
 import {onLoad, onPullDownRefresh, onReachBottom} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
-import PostCard from '@/components/PostCard.vue';
 import LoadMore from '@/components/LoadMore.vue';
-import {fetchAccountPosts} from '@/api';
+import {fetchAccountPosts, imageUrl} from '@/api';
 import {useAccountStore, useUserCacheStore} from '@/stores/account';
 import {compareTimeDesc} from '@/utils/datetime';
+import {contentImages, contentText, formatCount, stripHtml} from '@/utils/text';
 import {LOGIN_PAGE, toast} from '@/api/request';
 import type {IPost} from '@/types';
 
@@ -70,6 +105,9 @@ const posts = ref<IPost[]>([]);
 const loading = ref(false);
 const loadingMore = ref(false);
 const hasMore = ref(true);
+/** 作品总数（后端分页返回 total，首屏前用已加载条数兜底） */
+const total = ref(0);
+const tab = ref<'works' | 'likes'>('works');
 
 const profile = computed(() => userStore.accountMap[accountId.value]);
 const displayName = computed(() => profile.value?.nickname || profile.value?.username || '用户');
@@ -77,6 +115,7 @@ const isSelf = computed(() => !!accountId.value && accountId.value === accountSt
 const isFollowing = computed(() => !!profile.value?.follow?.is_following);
 const followerCount = computed(() => profile.value?.follow?.follower_count ?? 0);
 const followeeCount = computed(() => profile.value?.follow?.followee_count ?? 0);
+const worksCount = computed(() => total.value || posts.value.length);
 
 const loadStatus = computed<'idle' | 'loading' | 'nomore'>(() => {
   if (loadingMore.value) return 'loading';
@@ -101,7 +140,7 @@ const loadPosts = async (append = false) => {
 
   try {
     const last = append ? posts.value[posts.value.length - 1] : null;
-    const page = await fetchAccountPosts(accountId.value, last?.post_id ?? null, 10);
+    const page = await fetchAccountPosts(accountId.value, last?.post_id ?? null, 12);
     const items = page.items ?? [];
     const merged = append ? [...posts.value, ...items] : items;
 
@@ -110,7 +149,9 @@ const loadPosts = async (append = false) => {
     merged.forEach((item) => map.set(item.post_id, item));
     posts.value = Array.from(map.values()).sort((a, b) => compareTimeDesc(a.created_at, b.created_at));
 
-    hasMore.value = items.length >= 10;
+    // 后端 page.total 是真实总数（作品数）
+    if (typeof page.total === 'number') total.value = page.total;
+    hasMore.value = items.length >= 12;
   } catch (error: any) {
     toast(error?.detail || '加载失败');
   } finally {
@@ -119,6 +160,21 @@ const loadPosts = async (append = false) => {
     uni.stopPullDownRefresh();
   }
 };
+
+/** 作品网格：取首图（拼 CDN） */
+const coverOf = (item: IPost): string => {
+  const images = contentImages(item.content);
+  return images.length ? imageUrl(images[0]) : '';
+};
+
+/** 作品网格：无图时取正文首段 */
+const textOf = (item: IPost): string => {
+  const text = stripHtml(contentText(item.content));
+  return text ? text.slice(0, 40) : '查看详情';
+};
+
+/** 作品网格：图片数量（多图角标） */
+const imagesCountOf = (item: IPost): number => contentImages(item.content).length;
 
 /** 关注 / 取消 */
 const toggleFollow = async () => {
@@ -134,10 +190,15 @@ const toggleFollow = async () => {
   }
 };
 
-const goFollow = (tab: 'follower' | 'followee') => {
+const onMessage = () => toast('私信功能暂未开放');
+
+const goDetail = (item: IPost) => uni.navigateTo({url: `/pages/detail/detail?id=${item.post_id}`});
+const goFollow = (tabName: 'follower' | 'followee') => {
   if (!accountId.value) return;
-  uni.navigateTo({url: `/pages/follow/follow?id=${accountId.value}&tab=${tab}`});
+  uni.navigateTo({url: `/pages/follow/follow?id=${accountId.value}&tab=${tabName}`});
 };
+const goWorks = () => { tab.value = 'works'; };
+const gotoSettings = () => uni.navigateTo({url: '/pages/settings/settings'});
 
 onLoad((options) => {
   accountId.value = String(options?.id || '');
@@ -163,87 +224,186 @@ onReachBottom(() => {
   padding-bottom: 24rpx;
 }
 
-.profile {
-  padding: 36rpx 32rpx 8rpx;
+.header {
+  padding: 40rpx 32rpx 24rpx;
   background-color: $bg-card;
 }
 
-.profile__row {
+.header__top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
 }
 
-.profile__info {
+.header__info {
   flex: 1;
   min-width: 0;
   margin-left: 28rpx;
+  padding-top: 8rpx;
 }
 
-.profile__name {
+.header__name {
   display: block;
-  font-size: 38rpx;
+  font-size: 40rpx;
   font-weight: 700;
+  color: $text-1;
 }
 
-.profile__id {
+.header__id {
   display: block;
-  margin-top: 6rpx;
+  margin-top: 10rpx;
   font-size: 24rpx;
   color: $text-3;
 }
 
-.profile__bio {
+.header__bio {
   display: block;
-  margin-top: 20rpx;
-  font-size: 27rpx;
-  line-height: 1.6;
+  margin-top: 14rpx;
+  font-size: 26rpx;
+  line-height: 1.5;
   color: $text-2;
 }
 
 .stats {
   display: flex;
-  margin-top: 28rpx;
+  margin-top: 36rpx;
 }
 
 .stats__item {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  align-items: flex-start;
   margin-right: 56rpx;
 }
 
 .stats__num {
-  font-size: 34rpx;
+  font-size: 36rpx;
   font-weight: 600;
+  color: $text-1;
 }
 
 .stats__label {
-  margin-left: 8rpx;
-  font-size: 24rpx;
+  margin-top: 4rpx;
+  font-size: 23rpx;
   color: $text-3;
 }
 
 .actions {
-  padding: 28rpx 0 24rpx;
+  display: flex;
+  margin-top: 32rpx;
 }
 
-.follow-btn {
+.btn {
+  flex: 1;
+  height: 76rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 76rpx;
-  border-radius: 38rpx;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.btn--brand {
   background-color: $brand;
   color: #ffffff;
-  font-size: 28rpx;
 }
 
-.follow-btn--on {
+.btn--ghost {
   background-color: #f2f3f5;
-  color: $text-2;
+  color: $text-1;
+  margin-left: 20rpx;
 }
 
-.section-title {
-  padding: 24rpx 32rpx 12rpx;
+.tabs {
+  display: flex;
+  margin-top: 20rpx;
+  background-color: $bg-card;
+  border-bottom: 1rpx solid $border;
+}
+
+.tabs__item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 92rpx;
+  font-size: 29rpx;
+  color: $text-2;
+  position: relative;
+}
+
+.tabs__item--on {
+  color: $text-1;
+  font-weight: 600;
+}
+
+.tabs__item--on::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 48rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background-color: $brand;
+}
+
+.works {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 3rpx;
+  background-color: $bg-page;
+}
+
+.work {
+  position: relative;
+  width: calc((100% - 12rpx) / 3);
+  aspect-ratio: 1 / 1;
+  margin: 3rpx;
+  border-radius: 8rpx;
+  overflow: hidden;
+  background-color: $bg-card;
+}
+
+.work__img {
+  width: 100%;
+  height: 100%;
+}
+
+.work__text {
+  width: 100%;
+  height: 100%;
+  padding: 18rpx;
+  background: linear-gradient(135deg, #e8edf5, #f6f7fb);
+  box-sizing: border-box;
+}
+
+.work__text-inner {
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: $text-2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
+.work__badge {
+  position: absolute;
+  right: 10rpx;
+  bottom: 10rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  color: #ffffff;
+  background-color: rgba(0, 0, 0, 0.45);
+}
+
+.works__empty {
+  width: 100%;
+  padding: 120rpx 0;
+  text-align: center;
   font-size: 26rpx;
   color: $text-3;
 }

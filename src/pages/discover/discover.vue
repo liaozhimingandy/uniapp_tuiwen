@@ -29,8 +29,8 @@
       </view>
     </view>
 
-    <!-- 系统公告 -->
-    <view class="block">
+    <!-- 系统公告（受通知设置「系统公告」开关控制） -->
+    <view v-if="showNotice" class="block">
       <view class="block__head">
         <text class="block__title">系统公告</text>
         <text v-if="noticeLoading" class="block__tip">加载中…</text>
@@ -60,11 +60,12 @@
  * 把"树洞 / 天亮即焚"从底部 Tab 收进这里，作为二级入口；
  * 同页还聚合了搜索、关注、我的、系统公告，避免散落。
  */
-import {ref} from 'vue';
+import {computed, ref} from 'vue';
 import {onShow} from '@dcloudio/uni-app';
 import {fetchNotices} from '@/api';
 import {formatSmartTime} from '@/utils/datetime';
 import {useAccountStore} from '@/stores/account';
+import {getNotificationSettings} from '@/utils/notification';
 import {LOGIN_PAGE, toast} from '@/api/request';
 import type {IContent, INotice} from '@/types';
 
@@ -72,6 +73,8 @@ const accountStore = useAccountStore();
 
 const notices = ref<INotice[]>([]);
 const noticeLoading = ref(false);
+/** 是否展示系统公告：受通知设置控制 */
+const showNotice = computed(() => getNotificationSettings().systemNotice);
 
 const goSearch = () => uni.navigateTo({url: '/pages/search/search'});
 const goSnap = () => uni.navigateTo({url: '/pages/snap/snap'});
@@ -113,7 +116,10 @@ const loadNotices = async () => {
 };
 
 onShow(() => {
-  void loadNotices();
+  // 关闭「系统公告」开关则不拉取，省一次请求
+  if (getNotificationSettings().systemNotice) {
+    void loadNotices();
+  }
 });
 </script>
 

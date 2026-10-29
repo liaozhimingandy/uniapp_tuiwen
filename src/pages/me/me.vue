@@ -56,6 +56,15 @@
         </view>
       </view>
 
+      <!-- 通知 -->
+      <view class="group">
+        <view class="cell" @tap="gotoNotification">
+          <view class="cell__icon cell__icon--purple">铃</view>
+          <text class="cell__title">通知设置</text>
+          <text class="cell__arrow">›</text>
+        </view>
+      </view>
+
       <!-- 账号 -->
       <view class="group">
         <view class="cell" @tap="gotoResetPwd">
@@ -166,6 +175,9 @@ const gotoSettings = () => uni.navigateTo({url: '/pages/settings/settings'});
 
 /** 账号与安全：改密码 */
 const gotoResetPwd = () => uni.navigateTo({url: '/pages/reset-password/reset-password'});
+
+/** 通知设置 */
+const gotoNotification = () => uni.navigateTo({url: '/pages/notification/notification'});
 
 /** 关注 / 粉丝列表 */
 const goFollow = (tab: 'follower' | 'followee') => {
@@ -391,6 +403,7 @@ onShow(() => {
 .cell__icon--teal { background-color: #00b8d9; }
 .cell__icon--red { background-color: #ee0a24; }
 .cell__icon--gray { background-color: #969799; }
+.cell__icon--purple { background-color: #7232c4; }
 
 .cell__title {
   flex: 1;
