@@ -4,7 +4,7 @@ name: Build
 # 多端产物：H5 / 微信小程序 / App 资源包
 #
 # 产物用途：
-#   h5        → 静态站点，可丢到任意 CDN 或由 build-images.yml 打成镜像
+#   h5        → 静态站点，由 deploy-cloudflare-pages.yml 直接部署到 Cloudflare Pages
 #   mp-weixin → 用微信开发者工具「导入项目」后上传审核
 #   app       → App 资源包（www），用 HBuilderX 云打包产出 apk / ipa
 #
