@@ -47,7 +47,7 @@
           <video
             :id="'hv' + idx"
             class="player"
-            :src="item.play_url"
+            :src="staticLink(item.play_url)"
             :muted="!soundOn"
             :loop="true"
             playsinline
@@ -61,7 +61,7 @@
           <video
             :id="'uv' + idx"
             class="player"
-            :src="item.play_url"
+            :src="staticLink(item.play_url)"
             :autoplay="idx === current"
             :loop="true"
             :show-center-play-btn="false"
@@ -275,14 +275,15 @@ const setupHls = (idx: number, el: HTMLVideoElement) => {
   if (!item?.play_url?.endsWith('.m3u8')) return;
   if (hlsReady.has(idx)) return;
   hlsReady.add(idx);
+  const src = staticLink(item.play_url);
   try {
     if (el.canPlayType('application/vnd.apple.mpegurl')) {
-      if (!el.src) el.src = item.play_url;
+      if (!el.src) el.src = src;
       return;
     }
     if (Hls.isSupported()) {
       const hls = new Hls();
-      hls.loadSource(item.play_url);
+      hls.loadSource(src);
       hls.attachMedia(el);
       hlsMap.set(idx, hls);
     }
@@ -350,6 +351,7 @@ const switchTab = (next: FeedTab) => {
 
 const loadMore = async () => {
   const st = feeds[tab.value];
+  const tabKey = tab.value; // 记录发起请求时的 tab, 响应回来后校验防止串播
   if (loading.value || !st.hasMore) return;
   if (tab.value === 'follow' && !isLoggedIn()) return;
   loading.value = true;
@@ -364,7 +366,12 @@ const loadMore = async () => {
     st.feedId = page.feed_id || st.feedId;
     st.cursor = page.next_cursor || null;
     st.hasMore = Boolean(page.next_cursor) && fresh.length > 0;
+    const firstLoad = !st.loaded;
     st.loaded = true;
+    // 首屏数据到位后自动起播(小程序端靠 autoplay, H5 静音起播满足自动播放策略)
+    if (firstLoad && fresh.length > 0 && tab.value === tabKey) {
+      setTimeout(() => playIdx(0), 80);
+    }
   } catch {
     st.error = st.items.length === 0;
   } finally {
