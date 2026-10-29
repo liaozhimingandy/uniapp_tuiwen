@@ -1,0 +1,92 @@
+name: Deploy H5 to Cloudflare Pages
+
+# =============================================================================
+# GitHub 构建 H5 → 官方 pages-action 部署到 Cloudflare Pages 项目 tuiwen-h5。
+#
+# 架构取舍（沿用验证过的做法，坑都已绕开）：
+#   1. Cloudflare 不参与构建 —— 由 GitHub Actions 用仓库锁定的 Node/npm 构建，
+#      避免 Cloudflare 自建集成（如强套 Vite 版本）导致的构建报错。
+#   2. 不用 Cloudflare 的 "部署命令" 字段 —— 走 API Token 部署，干净可控。
+#   3. manifest.json 的 H5 路由是 history 模式（分享链接形如 /v/{video_id}/），
+#      依赖 Pages 的自动 SPA fallback：产物根目录有 index.html 时，未命中静态
+#      资源的路径自动 200 返回 index.html。因此**不要**在产物里放
+#      `_redirects`（`/* /index.html 200` 会劫持 /assets/*.js 等静态资源）。
+#
+# 前置（一次性，已完成）：
+#   - 仓库 Settings → Secrets and variables → Actions：
+#       CLOUDFLARE_API_TOKEN   （Account 级 "Cloudflare Pages: Edit" 权限）
+#       CLOUDFLARE_ACCOUNT_ID
+#   - Pages 项目 tuiwen-h5 首次部署时由本 workflow 自动创建（Direct Upload）。
+#
+# 自定义域名：h5.tuiwen.alsoapp.com 在 Pages 项目设置里绑定（Custom domains）。
+# =============================================================================
+
+on:
+  # 仅 main 分支、且前端相关文件有变化时触发，避免无关改动重复部署
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - '.env*'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-cloudflare-pages.yml'
+  # 手动触发（发版兜底 / 重试部署）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一时刻只允许一个部署在跑，排队不并发
+concurrency:
+  group: deploy-cloudflare-pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build H5 & deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # npm ci 要求 lockfile 与 package.json 严格一致
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # 部署前再过一次类型检查，防止带病上线
+      - name: Type check
+        run: npm run type-check
+
+      # 构建号注入产物，便于线上排查对应到哪次提交
+      - name: Compute version
+        id: ver
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Build H5
+        env:
+          VITE_APP_VERSION: ${{ steps.ver.outputs.version }}
+          VITE_APP_BUILD: ${{ github.sha }}
+        run: npm run build:h5
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: tuiwen-h5
+          directory: dist/build/h5
+          branch: main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
