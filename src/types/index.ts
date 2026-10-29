@@ -68,6 +68,12 @@ export interface ILikeState {
   is_liked: boolean;
 }
 
+/** 收藏状态（与点赞同构，字段名为 is_favorited） */
+export interface IFavoriteState {
+  count: number;
+  is_favorited: boolean;
+}
+
 /** 关注统计 */
 export interface IFollow {
   follower_count: number;

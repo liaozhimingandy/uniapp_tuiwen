@@ -9,6 +9,7 @@ import {config, staticLink} from '@/config';
 import type {
   IAccount,
   IComment,
+  IFavoriteState,
   IFollow,
   ILikeState,
   ILoginResult,
@@ -55,6 +56,15 @@ export const apiUrls = {
   deleteLike: (postId: string) => `/likes/${postId}/`,
   likeCount: (postId: string) => `/likes/${postId}/count/`,
   likedPosts: (accountId: string) => `/likes/account/${accountId}/`,
+
+  // 收藏
+  favorites: () => '/favorites/',
+  deleteFavorite: (postId: string) => `/favorites/${postId}/`,
+  favoriteCount: (postId: string) => `/favorites/${postId}/count/`,
+  favoritedPosts: (accountId: string) => `/favorites/account/${accountId}/`,
+
+  // 关注流（关注对象的帖子）
+  followPosts: () => '/posts/follow/',
 
   // 关注
   follows: () => '/follows/',
@@ -221,6 +231,26 @@ export const unlikePost = (postId: string): Promise<unknown> => http.del(apiUrls
 /** 某用户点赞过的帖子（抖音主页「喜欢」标签） */
 export const fetchLikedPosts = (accountId: string, cursor: string | null = null, limit = 12): Promise<IPage<IPost>> =>
   http.get(apiUrls.likedPosts(accountId), {data: {limit, ...(cursor ? {cursor} : {})}});
+
+// ------------------------------ 收藏 / 关注流 ------------------------------
+
+/** 收藏状态（count + is_favorited） */
+export const fetchFavoriteState = (postId: string): Promise<IFavoriteState> => http.get(apiUrls.favoriteCount(postId));
+
+/** 收藏（收藏人由服务端从令牌取） */
+export const favoritePost = (postId: string): Promise<unknown> =>
+  http.post(apiUrls.favorites(), {target_id: postId, target_type: COMMENT_TARGET_POST});
+
+/** 取消收藏 */
+export const unfavoritePost = (postId: string): Promise<unknown> => http.del(apiUrls.deleteFavorite(postId));
+
+/** 某用户收藏过的帖子（收藏夹，非本人只返回公开部分） */
+export const fetchFavoritedPosts = (accountId: string, cursor: string | null = null, limit = 12): Promise<IPage<IPost>> =>
+  http.get(apiUrls.favoritedPosts(accountId), {data: {limit, ...(cursor ? {cursor} : {})}});
+
+/** 关注流：关注对象的公开帖 + 自己的帖子（需登录） */
+export const fetchFollowPosts = (cursor: string | null = null, limit = 10): Promise<IPage<IPost>> =>
+  http.get(apiUrls.followPosts(), {data: {limit, ...(cursor ? {cursor} : {})}});
 
 // ------------------------------ 天亮即焚 ------------------------------
 

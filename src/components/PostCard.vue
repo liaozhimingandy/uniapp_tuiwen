@@ -25,6 +25,11 @@
       <view class="action" @tap.stop="goDetail">
         <text class="action__label">评论</text>
       </view>
+      <view class="action" :class="{'action--on': favorited}" @tap.stop="toggleFavorite">
+        <text class="action__icon">{{ favorited ? '★' : '☆' }}</text>
+        <text class="action__label">{{ favorited ? '已藏' : '藏' }}</text>
+        <text v-if="favoriteCount > 0" class="action__count">{{ formatCount(favoriteCount) }}</text>
+      </view>
       <view class="action" @tap.stop="copyLink">
         <text class="action__label">分享</text>
       </view>
@@ -43,7 +48,7 @@
  */
 import {computed, onMounted, ref} from 'vue';
 import {useUserCacheStore} from '@/stores/account';
-import {likePost, unlikePost, fetchLikeState, sharePostLink} from '@/api';
+import {likePost, unlikePost, fetchLikeState, sharePostLink, favoritePost, unfavoritePost, fetchFavoriteState} from '@/api';
 import {formatSmartTime} from '@/utils/datetime';
 import {contentImages, contentText, formatCount, stripHtml} from '@/utils/text';
 import type {IPost} from '@/types';
@@ -69,6 +74,11 @@ const liked = ref(false);
 const likeCount = ref(0);
 /** 是否已同步过点赞状态（避免重复请求） */
 let likeLoaded = false;
+
+const favorited = ref(false);
+const favoriteCount = ref(0);
+/** 是否已同步过收藏状态（避免重复请求） */
+let favoriteLoaded = false;
 
 onMounted(() => {
   // 静默拉一次作者资料：失败就让卡片显示"匿名用户"，不打断列表
@@ -113,6 +123,32 @@ const toggleLike = async () => {
   }
 };
 
+/** 收藏 / 取消：先乐观更新，失败回滚（与点赞同一套交互） */
+const toggleFavorite = async () => {
+  if (!isLoggedIn()) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  const wasFavorited = favorited.value;
+  const prevCount = favoriteCount.value;
+
+  favorited.value = !wasFavorited;
+  favoriteCount.value = Math.max(0, prevCount + (wasFavorited ? -1 : 1));
+  favoriteLoaded = true;
+
+  try {
+    if (wasFavorited) {
+      await unfavoritePost(props.post.post_id);
+    } else {
+      await favoritePost(props.post.post_id);
+    }
+  } catch {
+    favorited.value = wasFavorited;
+    favoriteCount.value = prevCount;
+    toast('操作失败，请重试');
+  }
+};
+
 /** 复制分享链接（App/小程序均可复制，粘贴到任意聊天工具） */
 const copyLink = () => {
   uni.setClipboardData({
@@ -121,16 +157,27 @@ const copyLink = () => {
   });
 };
 
-/** 详情页加载完点赞状态后可用（供父组件手动同步，当前未使用但保留扩展点） */
+/** 详情页加载完点赞/收藏状态后可用（供父组件手动同步，当前未使用但保留扩展点） */
 const syncLikeState = async () => {
-  if (likeLoaded) return;
-  try {
-    const state = await fetchLikeState(props.post.post_id);
-    liked.value = !!state.is_liked;
-    likeCount.value = state.count || 0;
-    likeLoaded = true;
-  } catch {
-    // 静默
+  if (!likeLoaded) {
+    try {
+      const state = await fetchLikeState(props.post.post_id);
+      liked.value = !!state.is_liked;
+      likeCount.value = state.count || 0;
+      likeLoaded = true;
+    } catch {
+      // 静默
+    }
+  }
+  if (!favoriteLoaded) {
+    try {
+      const state = await fetchFavoriteState(props.post.post_id);
+      favorited.value = !!state.is_favorited;
+      favoriteCount.value = state.count || 0;
+      favoriteLoaded = true;
+    } catch {
+      // 静默
+    }
   }
 };
 
