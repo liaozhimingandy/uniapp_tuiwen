@@ -44,9 +44,10 @@
             mode="aspectFill"
           />
           <!-- #ifdef H5 -->
-          <!-- 不绑 src: uni-video 会用原生方式加载 m3u8(Chrome 报错),
-               统一由 setupHls 接管(Safari 原生 HLS / 其他浏览器 hls.js) -->
-          <video
+          <!-- 原生 video(运行时渲染): 不给 src, 统一由 setupHls 接管
+               (Safari 原生 HLS / 其余浏览器 hls.js) -->
+          <component
+            :is="NativeVideo"
             :id="'hv' + idx"
             class="player"
             :muted="!soundOn"
@@ -197,7 +198,15 @@
 import {computed, reactive, ref} from 'vue';
 import {onLoad, onUnload} from '@dcloudio/uni-app';
 // #ifdef H5
+import {h, defineComponent} from 'vue';
 import Hls from 'hls.js';
+
+/**
+ * H5 原生 video：uni-app 会把模板里的 <video> 编译成 <uni-video> 复杂组件
+ * (自带容器/控制条/内部状态机)，hls.js 直接接管其内部元素不可靠。
+ * 用运行时 h() 渲染不经编译器转换，拿到的是纯 HTMLVideoElement。
+ */
+const NativeVideo = defineComponent((_props, {attrs}) => () => h('video', attrs));
 // #endif
 import {fetchVideoFeed, fetchFollowVideoFeed, likeVideo, unlikeVideo, favoriteVideo, unfavoriteVideo,
         follow, unfollow, fetchVideoComments, createVideoComment, deleteVideoComment} from '@/api';
