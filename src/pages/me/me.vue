@@ -56,10 +56,20 @@
         </view>
       </view>
 
-      <!-- 通知 -->
+      <!-- 通知 / 收藏 -->
       <view class="group">
-        <view class="cell" @tap="gotoNotification">
+        <view class="cell" @tap="gotoNotice">
           <view class="cell__icon cell__icon--purple">铃</view>
+          <text class="cell__title">通知中心</text>
+          <text class="cell__arrow">›</text>
+        </view>
+        <view class="cell" @tap="gotoFavorites">
+          <view class="cell__icon cell__icon--yellow">藏</view>
+          <text class="cell__title">我的收藏</text>
+          <text class="cell__arrow">›</text>
+        </view>
+        <view class="cell" @tap="gotoNotification">
+          <view class="cell__icon cell__icon--teal">设</view>
           <text class="cell__title">通知设置</text>
           <text class="cell__arrow">›</text>
         </view>
@@ -178,6 +188,12 @@ const gotoResetPwd = () => uni.navigateTo({url: '/pages/reset-password/reset-pas
 
 /** 通知设置 */
 const gotoNotification = () => uni.navigateTo({url: '/pages/notification/notification'});
+
+/** 通知中心 */
+const gotoNotice = () => uni.navigateTo({url: '/pages/notice/notice'});
+
+/** 我的收藏 */
+const gotoFavorites = () => uni.navigateTo({url: '/pages/favorites/favorites'});
 
 /** 关注 / 粉丝列表 */
 const goFollow = (tab: 'follower' | 'followee') => {
@@ -404,6 +420,7 @@ onShow(() => {
 .cell__icon--red { background-color: #ee0a24; }
 .cell__icon--gray { background-color: #969799; }
 .cell__icon--purple { background-color: #7232c4; }
+.cell__icon--yellow { background-color: #f5a623; }
 
 .cell__title {
   flex: 1;

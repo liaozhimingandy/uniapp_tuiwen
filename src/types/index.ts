@@ -147,6 +147,14 @@ export interface INotice {
   notice_type: number;
   title?: string | null;
   content: IContent;
+  /** 触发者（点赞/评论/关注的人，系统通知为空） */
+  trigger_account_id?: string | null;
+  /** 关联资源：1帖子/2评论/3用户 */
+  target_type?: number | null;
+  target_id?: string | null;
+  is_read?: boolean;
+  /** 冗余的头像/昵称等展示信息 */
+  extra?: {avatar?: string; nickname?: string; [key: string]: unknown} | null;
   created_at: string;
 }
 

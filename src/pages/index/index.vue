@@ -251,7 +251,7 @@ const applyPending = () => {
 
 const goLogin = () => uni.navigateTo({url: LOGIN_PAGE});
 const goSearch = () => uni.navigateTo({url: '/pages/search/search'});
-const goNotification = () => uni.navigateTo({url: '/pages/notification/notification'});
+const goNotification = () => uni.navigateTo({url: '/pages/notice/notice'});
 const goDiscover = () => uni.switchTab({url: '/pages/discover/discover'});
 const goPublish = () => {
   if (!accountStore.loggedIn) {

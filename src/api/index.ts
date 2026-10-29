@@ -12,6 +12,7 @@ import type {
   IFavoriteState,
   IFollow,
   ILikeState,
+  INotice,
   ILoginResult,
   IPage,
   IPost,
@@ -83,6 +84,9 @@ export const apiUrls = {
 
   // 其它
   notices: () => '/notices/system/',
+  myNotices: (accountId: string) => `/notices/accounts/${accountId}/`,
+  unreadCount: (accountId: string) => `/notices/accounts/${accountId}/unread-count/`,
+  markNoticesRead: () => '/notices/read/',
   feedback: () => '/feedbacks/',
   health: () => '/health-check/',
 };
@@ -152,9 +156,13 @@ export const unfollow = (followeeId: string): Promise<unknown> => http.del(apiUr
 export const searchAccounts = (keyword: string, offset = 0, limit = 20): Promise<IPage<IAccount>> =>
   http.get(apiUrls.searchAccount(keyword), {data: {offset, limit}});
 
-/** 关注列表 / 粉丝列表（后端未实现时返回 404，调用方需容忍） */
-export const fetchFollowees = (accountId: string): Promise<IPage<IAccount>> => http.get(apiUrls.followees(accountId));
-export const fetchFollowers = (accountId: string): Promise<IPage<IAccount>> => http.get(apiUrls.followers(accountId));
+/** 关注列表（正在关注谁，offset 分页） */
+export const fetchFollowees = (accountId: string, page = 1, size = 20): Promise<IPage<IAccount>> =>
+  http.get(apiUrls.followees(accountId), {data: {page, size}});
+
+/** 粉丝列表（谁关注了他，offset 分页） */
+export const fetchFollowers = (accountId: string, page = 1, size = 20): Promise<IPage<IAccount>> =>
+  http.get(apiUrls.followers(accountId), {data: {page, size}});
 
 // ------------------------------ 帖子 ------------------------------
 
@@ -299,6 +307,18 @@ export const fetchVideoFeed = (
 
 /** 系统公告 */
 export const fetchNotices = (): Promise<IPage<unknown>> => http.get(apiUrls.notices());
+
+/** 我的通知（notice_type: 0系统/1点赞/2评论/3关注/4提及，不传返回全部） */
+export const fetchMyNotices = (accountId: string, page = 1, size = 20, noticeType?: number): Promise<IPage<INotice>> =>
+  http.get(apiUrls.myNotices(accountId), {data: {page, size, ...(noticeType === undefined ? {} : {notice_type: noticeType})}});
+
+/** 未读通知数 */
+export const fetchUnreadCount = (accountId: string): Promise<{count: number}> =>
+  http.get(apiUrls.unreadCount(accountId), {hideError: true});
+
+/** 批量标记已读（ids 为空表示全部） */
+export const markNoticesRead = (ids?: number[]): Promise<{marked: number}> =>
+  http.put(apiUrls.markNoticesRead(), {ids: ids ?? null} as Record<string, unknown>);
 
 /** 上传图片，返回相对路径（展示时用 imageUrl 拼 CDN） */
 export const upload = uploadImage;

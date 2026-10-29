@@ -20,6 +20,8 @@
       </view>
       <text class="row__arrow">›</text>
     </view>
+
+    <LoadMore v-if="list.length > 0" :status="loadStatus" @refresh="loadMore" />
   </view>
 </template>
 
@@ -27,13 +29,14 @@
 /**
  * 关注 / 粉丝列表
  *
- * 后端这两个接口（`/follows/{id}/followees|followers/`）在部分环境尚未实现，
- * 会返回 404。这里明确区分"没有人"和"接口没开"：
- * 都用 404 兜底文案会让人误以为是自己的数据丢了。
+ * 数据源: GET /follows/{id}/followees|followers/（page/size 分页）。
+ * 历史上这两个接口未实现时返回 404，这里保留 404 兜底文案，
+ * 避免"接口没开"和"真的没有人"混为一谈。
  */
 import {computed, ref} from 'vue';
-import {onLoad} from '@dcloudio/uni-app';
+import {onLoad, onReachBottom} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
+import LoadMore from '@/components/LoadMore.vue';
 import {fetchFollowees, fetchFollowers} from '@/api';
 import type {IAccount} from '@/types';
 
@@ -41,33 +44,55 @@ const accountId = ref('');
 const tab = ref<'follower' | 'followee'>('followee');
 const list = ref<IAccount[]>([]);
 const loading = ref(false);
+const loadingMore = ref(false);
+const page = ref(1);
+const hasMore = ref(true);
 /** 接口未实现（404）时给出更准确的提示 */
 const unsupported = ref(false);
+
+const SIZE = 20;
 
 const emptyText = computed(() => {
   if (unsupported.value) return '该功能暂未开放';
   return tab.value === 'followee' ? '还没有关注任何人' : '还没有粉丝';
 });
 
-const load = async () => {
+const loadStatus = computed<'idle' | 'loading' | 'nomore'>(() => {
+  if (loadingMore.value) return 'loading';
+  return hasMore.value ? 'idle' : 'nomore';
+});
+
+const load = async (append = false) => {
   if (!accountId.value) return;
+  if (append && (loadingMore.value || !hasMore.value)) return;
   loading.value = true;
   unsupported.value = false;
+  if (append) loadingMore.value = true;
+
   try {
-    const page = tab.value === 'followee' ? await fetchFollowees(accountId.value) : await fetchFollowers(accountId.value);
-    list.value = page?.items ?? [];
+    const res = tab.value === 'followee'
+      ? await fetchFollowees(accountId.value, page.value, SIZE)
+      : await fetchFollowers(accountId.value, page.value, SIZE);
+    const items = res?.items ?? [];
+    list.value = append ? [...list.value, ...items] : items;
+    hasMore.value = items.length >= SIZE;
   } catch (error: any) {
-    list.value = [];
+    if (!append) list.value = [];
     // 404 = 后端没实现该路由，不是"没有数据"
     if (error?.status === 404) unsupported.value = true;
   } finally {
     loading.value = false;
+    loadingMore.value = false;
   }
 };
+
+const loadMore = () => load(true);
 
 const switchTab = (next: 'follower' | 'followee') => {
   if (tab.value === next) return;
   tab.value = next;
+  page.value = 1;
+  hasMore.value = true;
   list.value = [];
   void load();
 };
@@ -81,6 +106,13 @@ onLoad((options) => {
   const preset = String(options?.tab || '');
   if (preset === 'follower' || preset === 'followee') tab.value = preset;
   void load();
+});
+
+onReachBottom(() => {
+  if (hasMore.value) {
+    page.value += 1;
+    void load(true);
+  }
 });
 </script>
 
