@@ -84,11 +84,8 @@ const form = reactive({
 
 const displayName = computed(() => form.nickname || accountStore.displayName);
 
-/** 性别文案：null/0 表示未设置 */
-const sexLabel = computed(() => {
-  const matched = SEX_OPTIONS.find((item) => item.value === form.sex);
-  return matched && form.sex !== 0 ? matched.label : '未设置';
-});
+/** 性别文案：0 / null 表示还没填过（不在选项集合里） */
+const sexLabel = computed(() => SEX_OPTIONS.find((item) => item.value === form.sex)?.label || '未设置');
 
 /** picker 需要的字符串数组与当前下标 */
 const sexLabels = SEX_OPTIONS.map((item) => item.label);

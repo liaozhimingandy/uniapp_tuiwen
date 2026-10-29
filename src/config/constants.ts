@@ -74,10 +74,14 @@ export const POST_CONTENT_MAX = 5000;
 /** 单次最多选择的图片数 */
 export const MAX_IMAGES = 9;
 
-/** 性别选项 */
+/**
+ * 性别选项
+ *
+ * 只保留三个**可主动选择**的值；后端的 0（未知）用来表示"没填过"，
+ * 不放进选项里，否则用户选了"未知"和从没填过在界面上无法区分。
+ */
 export const SEX_OPTIONS = [
   {value: 1, label: '男'},
   {value: 2, label: '女'},
-  {value: 0, label: '未知'},
   {value: 9, label: '不愿透露'},
 ];
