@@ -70,6 +70,7 @@
             :src="staticLink(item.play_url)"
             :autoplay="idx === current"
             :loop="true"
+            :muted="!soundOn"
             :show-center-play-btn="false"
             :enable-progress-gesture="false"
             object-fit="cover"
@@ -143,20 +144,32 @@
             <text class="meta__author">@{{ item.author?.nickname || '匿名' }}</text>
           </view>
 
-          <!-- 底部播放进度条(仅当前屏渲染) -->
-          <view v-if="idx === current" class="progress">
-            <view class="progress__bar" :style="{width: (progress * 100) + '%'}" />
+          <!-- 底部播放进度条(仅当前屏渲染): 时间 + 可拖拽 seek -->
+          <view
+            v-if="idx === current && duration > 0"
+            class="progress"
+            @tap.stop
+            @touchstart.stop="onSeekStart"
+            @touchmove.stop.prevent="onSeekMove"
+            @touchend.stop="onSeekEnd"
+          >
+            <view class="progress__time">
+              <text>{{ fmtTime(displayTime) }}</text>
+              <text>{{ fmtTime(duration) }}</text>
+            </view>
+            <view class="progress__track">
+              <view class="progress__bar" :style="{width: (displayProgress * 100) + '%'}" />
+              <view class="progress__dot" :style="{left: (displayProgress * 100) + '%'}" />
+            </view>
           </view>
         </view>
       </swiper-item>
     </swiper>
 
-    <!-- 声音开关（H5 自动播放策略要求先静音，用户可手动开声） -->
-    <!-- #ifdef H5 -->
+    <!-- 声音开关（H5 自动播放策略要求先静音；小程序端靠 muted 属性绑定） -->
     <view class="sound" @tap="toggleSound">
       <text>{{ soundOn ? '🔊' : '🔇' }}</text>
     </view>
-    <!-- #endif -->
 
     <!-- 评论面板（底部抽屉） -->
     <view v-if="commentOpen" class="sheet-mask" @tap="closeComments">
@@ -344,22 +357,83 @@ const onPause = () => {
   playing.value = false;
 };
 
-// ----------------------------- 播放进度条 -----------------------------
+// ----------------------------- 播放进度条（时间 + 拖拽 seek） -----------------------------
 
-/** 当前屏播放进度(0-1), timeupdate 驱动 */
-const progress = ref(0);
+/** 当前屏播放器的播放位置与总时长(秒), timeupdate 驱动 */
+const currentTime = ref(0);
+const duration = ref(0);
+
+/** 拖拽中: 位置由手势接管, 不再跟随 timeupdate */
+const dragging = ref(false);
+const dragRatio = ref(0);
+
+/** mm:ss, 超过 1 小时进位到 mm 累加 */
+const fmtTime = (sec: number): string => {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(s / 60);
+  return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+
+const displayProgress = computed(() => {
+  if (dragging.value) return dragRatio.value;
+  return duration.value > 0 ? Math.min(currentTime.value / duration.value, 1) : 0;
+});
+
+const displayTime = computed(() => (dragging.value ? dragRatio.value * duration.value : currentTime.value));
 
 const onTimeUpdate = (e: any) => {
   // #ifdef H5
   const el = e?.target as HTMLVideoElement | undefined;
   // 只跟随当前屏的播放器, 预取/邻屏的时间更新不刷进度
   if (!el || el !== getPlayer(current.value)) return;
-  const d = el.duration;
-  if (d && isFinite(d) && d > 0) progress.value = el.currentTime / d;
+  if (el.duration && isFinite(el.duration)) duration.value = el.duration;
+  if (!dragging.value) currentTime.value = el.currentTime || 0;
   // #endif
   // #ifndef H5
-  const d2 = Number(e?.detail?.duration);
-  if (d2 > 0) progress.value = Number(e.detail.currentTime) / d2;
+  const d = Number(e?.detail?.duration);
+  if (d > 0) duration.value = d;
+  if (!dragging.value) currentTime.value = Number(e?.detail?.currentTime) || 0;
+  // #endif
+};
+
+/** 拖拽位置换算: 轨道横贯全屏宽, 直接用触点 X / 屏宽 得比例 */
+const updateDrag = (e: any) => {
+  const x = Number(e?.touches?.[0]?.clientX);
+  if (!isFinite(x)) return;
+  let w = 1;
+  // #ifdef H5
+  w = window.innerWidth || 1;
+  // #endif
+  // #ifndef H5
+  const info = uni.getWindowInfo ? uni.getWindowInfo() : uni.getSystemInfoSync();
+  w = info.windowWidth || 1;
+  // #endif
+  dragRatio.value = Math.min(Math.max(x / w, 0), 1);
+};
+
+const onSeekStart = (e: any) => {
+  if (!(duration.value > 0)) return;
+  dragging.value = true;
+  updateDrag(e);
+};
+
+const onSeekMove = (e: any) => {
+  if (dragging.value) updateDrag(e);
+};
+
+const onSeekEnd = () => {
+  if (!dragging.value) return;
+  const ratio = dragRatio.value;
+  dragging.value = false;
+  const target = ratio * duration.value;
+  currentTime.value = target; // 先回显, 等 timeupdate 接管
+  const player = getPlayer(current.value);
+  if (!player) return;
+  // #ifdef H5
+  (player as HTMLVideoElement).currentTime = target;
+  // #endif
+  // #ifndef H5
+  player.seek(target);
   // #endif
 };
 
@@ -397,17 +471,22 @@ const togglePlay = () => {
   // #endif
 };
 
-// #ifdef H5
 const toggleSound = () => {
   soundOn.value = !soundOn.value;
+  // #ifdef H5
   const el = getPlayer(current.value) as HTMLVideoElement | null;
   if (el) el.muted = !soundOn.value;
+  // #endif
+  // #ifndef H5
+  // 小程序端 muted 是 video 组件的响应式属性(:muted), 无需手动操作
+  toast(soundOn.value ? '声音已开启' : '已静音');
+  // #endif
 };
-// #endif
 
 const onChange = (e: {detail: {current: number}}) => {
   current.value = e.detail.current;
-  progress.value = 0; // 切屏重置进度条
+  currentTime.value = 0; // 切屏重置进度条
+  duration.value = 0;
   playIdx(current.value);
   if (hasMore.value && !loading.value && current.value >= items.value.length - 2) {
     void loadMore();
@@ -800,21 +879,51 @@ onUnload(() => {
   transform: translate(-50%, -50%) rotate(90deg);
 }
 
-/* 底部播放进度条 */
+/* 底部播放进度条: 时间行 + 轨道 + 拖拽圆点 */
 .progress {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
+  padding: 10rpx 0 12rpx;
+  z-index: 6;
+}
+
+.progress__time {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 24rpx 8rpx;
+  font-size: 20rpx;
+  color: rgba(255, 255, 255, 0.85);
+  text-shadow: 0 1rpx 4rpx rgba(0, 0, 0, 0.5);
+}
+
+.progress__track {
+  position: relative;
   height: 6rpx;
-  background-color: rgba(255, 255, 255, 0.2);
-  z-index: 5;
+  margin: 0 24rpx;
+  background-color: rgba(255, 255, 255, 0.25);
+  border-radius: 3rpx;
 }
 
 .progress__bar {
-  height: 100%;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   background-color: #fe2c55;
-  transition: width 0.2s linear;
+  border-radius: 3rpx;
+}
+
+.progress__dot {
+  position: absolute;
+  top: 50%;
+  width: 24rpx;
+  height: 24rpx;
+  margin: -12rpx 0 0 -12rpx;
+  border-radius: 50%;
+  background-color: #ffffff;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.45);
 }
 
 /* H5 端 <video> 被编译成 uni-video 组件, 尺寸样式落在宿主上,
@@ -934,7 +1043,7 @@ onUnload(() => {
   position: absolute;
   left: 28rpx;
   right: 130rpx;
-  bottom: 60rpx;
+  bottom: 110rpx;
   display: flex;
   flex-direction: column;
 }
