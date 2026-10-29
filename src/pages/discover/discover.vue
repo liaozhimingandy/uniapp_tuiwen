@@ -5,6 +5,28 @@
       <text class="searchbar__icon">🔍</text>
       <text class="searchbar__ph">搜索用户、内容</text>
     </view>
+	
+	<!-- 系统公告（受通知设置「系统公告」开关控制） -->
+	<view v-if="showNotice" class="block">
+	  <view class="block__head">
+	    <text class="block__title">系统公告</text>
+	    <text v-if="noticeLoading" class="block__tip">加载中…</text>
+	  </view>
+	
+	  <view v-if="!noticeLoading && notices.length === 0" class="block__empty">暂无公告</view>
+	
+	  <view
+	    v-for="n in notices"
+	    :key="n.id"
+	    class="notice"
+	  >
+	    <view class="notice__row">
+	      <text class="notice__title">{{ n.title || '公告' }}</text>
+	      <text class="notice__time">{{ formatSmartTime(n.created_at) }}</text>
+	    </view>
+	    <text class="notice__content">{{ noticeText(n) }}</text>
+	  </view>
+	</view>
 
     <!-- 入口分组：微信「发现」页样式 —— 白底列表行 + 圆角图标 + 右箭头 -->
     <view class="group">
@@ -62,27 +84,6 @@
       </view>
     </view>
 
-    <!-- 系统公告（受通知设置「系统公告」开关控制） -->
-    <view v-if="showNotice" class="block">
-      <view class="block__head">
-        <text class="block__title">系统公告</text>
-        <text v-if="noticeLoading" class="block__tip">加载中…</text>
-      </view>
-
-      <view v-if="!noticeLoading && notices.length === 0" class="block__empty">暂无公告</view>
-
-      <view
-        v-for="n in notices"
-        :key="n.id"
-        class="notice"
-      >
-        <view class="notice__row">
-          <text class="notice__title">{{ n.title || '公告' }}</text>
-          <text class="notice__time">{{ formatSmartTime(n.created_at) }}</text>
-        </view>
-        <text class="notice__content">{{ noticeText(n) }}</text>
-      </view>
-    </view>
   </view>
 </template>
 

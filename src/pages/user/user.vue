@@ -6,7 +6,7 @@
         <UserAvatar :name="displayName" :src="profile?.avatar" :size="140" />
         <view class="header__info">
           <text class="header__name ellipsis">{{ displayName }}</text>
-          <text class="header__id">抖音号：@{{ profile?.username }}</text>
+          <text class="header__id">账号：@{{ profile?.username }}</text>
           <text v-if="profile?.bio" class="header__bio ellipsis-2">{{ profile.bio }}</text>
         </view>
       </view>
