@@ -43,19 +43,21 @@
 
     <!-- 作品 / 喜欢 标签栏 -->
     <view class="tabs">
-      <view class="tabs__item" :class="{'tabs__item--on': tab === 'works'}" @tap="tab = 'works'">
+      <view class="tabs__item" :class="{'tabs__item--on': tab === 'works'}" @tap="switchTab('works')">
         <text>作品</text>
       </view>
-      <view class="tabs__item" :class="{'tabs__item--on': tab === 'likes'}" @tap="tab = 'likes'">
+      <view class="tabs__item" :class="{'tabs__item--on': tab === 'likes'}" @tap="switchTab('likes')">
         <text>喜欢</text>
       </view>
     </view>
 
-    <!-- 作品网格 -->
-    <view v-if="tab === 'works'" class="works">
-      <view v-if="posts.length === 0 && !loading" class="works__empty">还没有发布作品</view>
+    <!-- 作品 / 喜欢 共用三列网格 -->
+    <view class="works">
+      <view v-if="activeList.length === 0 && !loading" class="works__empty">
+        {{ tab === 'works' ? '还没有发布作品' : '该用户暂未公开喜欢的内容' }}
+      </view>
       <view
-        v-for="item in posts"
+        v-for="item in activeList"
         :key="item.post_id"
         class="work"
         @tap="goDetail(item)"
@@ -67,12 +69,7 @@
         <view v-if="imagesCountOf(item) > 1" class="work__badge">{{ imagesCountOf(item) }}图</view>
       </view>
 
-      <LoadMore v-if="posts.length > 0" :status="loadStatus" @refresh="loadPosts" />
-    </view>
-
-    <!-- 喜欢（暂无后端支持，展示空态） -->
-    <view v-else class="works">
-      <view class="works__empty">该用户暂未公开喜欢的内容</view>
+      <LoadMore v-if="activeList.length > 0" :status="loadStatus" @refresh="loadMore" />
     </view>
   </view>
 </template>
@@ -90,7 +87,7 @@ import {computed, ref} from 'vue';
 import {onLoad, onPullDownRefresh, onReachBottom} from '@dcloudio/uni-app';
 import UserAvatar from '@/components/UserAvatar.vue';
 import LoadMore from '@/components/LoadMore.vue';
-import {fetchAccountPosts, imageUrl} from '@/api';
+import {fetchAccountPosts, fetchLikedPosts, imageUrl} from '@/api';
 import {useAccountStore, useUserCacheStore} from '@/stores/account';
 import {compareTimeDesc} from '@/utils/datetime';
 import {contentImages, contentText, formatCount, stripHtml} from '@/utils/text';
@@ -101,10 +98,15 @@ const accountStore = useAccountStore();
 const userStore = useUserCacheStore();
 
 const accountId = ref('');
-const posts = ref<IPost[]>([]);
 const loading = ref(false);
-const loadingMore = ref(false);
-const hasMore = ref(true);
+const works = ref<IPost[]>([]);
+const liked = ref<IPost[]>([]);
+const worksCursor = ref<string | null>(null);
+const likedCursor = ref<string | null>(null);
+const worksHasMore = ref(true);
+const likedHasMore = ref(true);
+const worksLoadingMore = ref(false);
+const likedLoadingMore = ref(false);
 /** 作品总数（后端分页返回 total，首屏前用已加载条数兜底） */
 const total = ref(0);
 const tab = ref<'works' | 'likes'>('works');
@@ -115,11 +117,15 @@ const isSelf = computed(() => !!accountId.value && accountId.value === accountSt
 const isFollowing = computed(() => !!profile.value?.follow?.is_following);
 const followerCount = computed(() => profile.value?.follow?.follower_count ?? 0);
 const followeeCount = computed(() => profile.value?.follow?.followee_count ?? 0);
-const worksCount = computed(() => total.value || posts.value.length);
+const worksCount = computed(() => total.value || works.value.length);
+
+const activeList = computed(() => (tab.value === 'works' ? works.value : liked.value));
 
 const loadStatus = computed<'idle' | 'loading' | 'nomore'>(() => {
-  if (loadingMore.value) return 'loading';
-  return hasMore.value ? 'idle' : 'nomore';
+  if (tab.value === 'works') {
+    return worksLoadingMore.value ? 'loading' : (worksHasMore.value ? 'idle' : 'nomore');
+  }
+  return likedLoadingMore.value ? 'loading' : (likedHasMore.value ? 'idle' : 'nomore');
 });
 
 /** 拉资料（含关注状态） */
@@ -133,32 +139,71 @@ const loadProfile = async () => {
 };
 
 /** 拉动态（游标分页） */
-const loadPosts = async (append = false) => {
-  if (!accountId.value || (append && (loadingMore.value || !hasMore.value))) return;
-  if (append) loadingMore.value = true;
+const loadWorks = async (append = false) => {
+  if (!accountId.value || (append && (worksLoadingMore.value || !worksHasMore.value))) return;
+  if (append) worksLoadingMore.value = true;
   else loading.value = true;
 
   try {
-    const last = append ? posts.value[posts.value.length - 1] : null;
-    const page = await fetchAccountPosts(accountId.value, last?.post_id ?? null, 12);
+    const page = await fetchAccountPosts(accountId.value, append ? worksCursor.value : null, 12);
     const items = page.items ?? [];
-    const merged = append ? [...posts.value, ...items] : items;
+    const merged = append ? [...works.value, ...items] : items;
 
     // 去重 + 按时间倒序：后端分页偶发返回重复项时不至于在列表里出现两条一样的
     const map = new Map<string, IPost>();
     merged.forEach((item) => map.set(item.post_id, item));
-    posts.value = Array.from(map.values()).sort((a, b) => compareTimeDesc(a.created_at, b.created_at));
+    works.value = Array.from(map.values()).sort((a, b) => compareTimeDesc(a.created_at, b.created_at));
 
     // 后端 page.total 是真实总数（作品数）
     if (typeof page.total === 'number') total.value = page.total;
-    hasMore.value = items.length >= 12;
+    worksHasMore.value = items.length >= 12;
+    if (items.length) worksCursor.value = items[items.length - 1].post_id;
   } catch (error: any) {
     toast(error?.detail || '加载失败');
   } finally {
     loading.value = false;
-    loadingMore.value = false;
+    worksLoadingMore.value = false;
     uni.stopPullDownRefresh();
   }
+};
+
+/** 拉「喜欢」：某用户点赞过的帖子（抖音主页「喜欢」标签） */
+const loadLiked = async (append = false) => {
+  if (!accountId.value || (append && (likedLoadingMore.value || !likedHasMore.value))) return;
+  if (append) likedLoadingMore.value = true;
+  else loading.value = true;
+
+  try {
+    const page = await fetchLikedPosts(accountId.value, append ? likedCursor.value : null, 12);
+    const items = page.items ?? [];
+    const merged = append ? [...liked.value, ...items] : items;
+
+    const map = new Map<string, IPost>();
+    merged.forEach((item) => map.set(item.post_id, item));
+    liked.value = Array.from(map.values()).sort((a, b) => compareTimeDesc(a.created_at, b.created_at));
+
+    likedHasMore.value = items.length >= 12;
+    if (items.length) likedCursor.value = items[items.length - 1].post_id;
+  } catch (error: any) {
+    toast(error?.detail || '加载失败');
+  } finally {
+    loading.value = false;
+    likedLoadingMore.value = false;
+    uni.stopPullDownRefresh();
+  }
+};
+
+/** 触底加载：按当前标签派发 */
+const loadMore = () => {
+  if (tab.value === 'works') void loadWorks(true);
+  else void loadLiked(true);
+};
+
+/** 切换标签（首次进入「喜欢」自动拉一页） */
+const switchTab = (next: 'works' | 'likes') => {
+  if (tab.value === next) return;
+  tab.value = next;
+  if (next === 'likes' && liked.value.length === 0) void loadLiked();
 };
 
 /** 作品网格：取首图（拼 CDN） */
@@ -197,23 +242,24 @@ const goFollow = (tabName: 'follower' | 'followee') => {
   if (!accountId.value) return;
   uni.navigateTo({url: `/pages/follow/follow?id=${accountId.value}&tab=${tabName}`});
 };
-const goWorks = () => { tab.value = 'works'; };
+const goWorks = () => switchTab('works');
 const gotoSettings = () => uni.navigateTo({url: '/pages/settings/settings'});
 
 onLoad((options) => {
   accountId.value = String(options?.id || '');
   if (!accountId.value) return;
   void loadProfile();
-  void loadPosts();
+  void loadWorks();
 });
 
 onPullDownRefresh(() => {
   void loadProfile();
-  void loadPosts();
+  if (tab.value === 'works') void loadWorks();
+  else void loadLiked();
 });
 
 onReachBottom(() => {
-  void loadPosts(true);
+  void loadMore();
 });
 </script>
 

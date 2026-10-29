@@ -54,6 +54,7 @@ export const apiUrls = {
   likes: () => '/likes/',
   deleteLike: (postId: string) => `/likes/${postId}/`,
   likeCount: (postId: string) => `/likes/${postId}/count/`,
+  likedPosts: (accountId: string) => `/likes/account/${accountId}/`,
 
   // 关注
   follows: () => '/follows/',
@@ -216,6 +217,10 @@ export const likePost = (postId: string): Promise<unknown> =>
 
 /** 取消点赞 */
 export const unlikePost = (postId: string): Promise<unknown> => http.del(apiUrls.deleteLike(postId));
+
+/** 某用户点赞过的帖子（抖音主页「喜欢」标签） */
+export const fetchLikedPosts = (accountId: string, cursor: string | null = null, limit = 12): Promise<IPage<IPost>> =>
+  http.get(apiUrls.likedPosts(accountId), {data: {limit, ...(cursor ? {cursor} : {})}});
 
 // ------------------------------ 天亮即焚 ------------------------------
 
