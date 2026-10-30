@@ -10,6 +10,23 @@
         <view class="topnav__btn" hover-class="topnav__btn--hover" @tap="goNotification">
           <text class="topnav__icon">铃</text>
         </view>
+        <view class="topnav__btn" hover-class="topnav__btn--hover" @tap.stop="togglePlus">
+          <text class="topnav__icon">＋</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- + 号弹层：扫一扫 / 我的二维码（参照微信右上角 +） -->
+    <view v-if="plusOpen" class="plus-mask" @tap="plusOpen = false">
+      <view class="plus-menu" @tap.stop>
+        <view class="plus-item" hover-class="plus-item--hover" @tap="onScan">
+          <view class="plus-item__icon plus-item__icon--blue">扫</view>
+          <text class="plus-item__label">扫一扫</text>
+        </view>
+        <view class="plus-item" hover-class="plus-item--hover" @tap="goMyQr">
+          <view class="plus-item__icon plus-item__icon--indigo">码</view>
+          <text class="plus-item__label">我的二维码</text>
+        </view>
       </view>
     </view>
 
@@ -95,6 +112,7 @@ import LoadMore from '@/components/LoadMore.vue';
 import {fetchFollowPosts, fetchLatestPosts, fetchPosts} from '@/api';
 import {useAccountStore, usePostStore} from '@/stores/account';
 import {getNotificationSettings} from '@/utils/notification';
+import {parseQrTarget} from '@/utils/share';
 import type {IPost} from '@/types';
 import {LOGIN_PAGE, toast} from '@/api/request';
 
@@ -261,6 +279,42 @@ const goPublish = () => {
   uni.navigateTo({url: '/pages/publish/publish'});
 };
 
+// ------------------------------ + 号弹层（扫一扫 / 我的二维码） ------------------------------
+const plusOpen = ref(false);
+const togglePlus = () => {
+  plusOpen.value = !plusOpen.value;
+};
+
+/** 扫一扫：识别推文深链跳主页，其余内容复制并提示 */
+const onScan = () => {
+  plusOpen.value = false;
+  uni.scanCode({
+    success: (res) => {
+      const target = parseQrTarget(res.result);
+      if (target.type === 'user' && target.id) {
+        uni.navigateTo({url: `/pages/user/user?id=${target.id}`});
+        return;
+      }
+      // 非推文深链：复制内容，方便用户自行处理
+      uni.setClipboardData({data: target.text});
+      toast(target.type === 'url' ? '链接已复制' : '内容已复制');
+    },
+    fail: () => {
+      // 用户取消扫码，静默不提示
+    },
+  });
+};
+
+/** 我的二维码：未登录先去登录 */
+const goMyQr = () => {
+  plusOpen.value = false;
+  if (!accountStore.loggedIn) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  uni.navigateTo({url: '/pages/qrcode/qrcode'});
+};
+
 onShow(() => {
   // 未登录也能展示公开推文：首屏加载、有内容后再轮询"新内容"提示条
   const settings = getNotificationSettings();
@@ -362,6 +416,63 @@ onReachBottom(() => {
 
 .topnav__icon {
   font-size: 28rpx;
+  color: $text-1;
+}
+
+// ------------------------------ + 号弹层（扫一扫 / 我的二维码） ------------------------------
+.plus-mask {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+}
+
+.plus-menu {
+  position: absolute;
+  top: calc(var(--window-top, 0px) + 96rpx);
+  right: 24rpx;
+  min-width: 248rpx;
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  padding: 8rpx 0;
+  box-shadow: 0 8rpx 30rpx rgba(0, 0, 0, 0.15);
+}
+
+.plus-item {
+  display: flex;
+  align-items: center;
+  padding: 24rpx 28rpx;
+}
+
+.plus-item--hover {
+  background-color: $bg-page;
+}
+
+.plus-item__icon {
+  width: 56rpx;
+  height: 56rpx;
+  margin-right: 20rpx;
+  border-radius: 14rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.plus-item__icon--blue {
+  background-color: #1989fa;
+}
+
+.plus-item__icon--indigo {
+  background-color: #5b5bd6;
+}
+
+.plus-item__label {
+  font-size: 30rpx;
   color: $text-1;
 }
 

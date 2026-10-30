@@ -16,6 +16,10 @@
           <text class="profile__id">@{{ username }}</text>
           <text v-if="accountStore.account.bio" class="profile__bio ellipsis">{{ accountStore.account.bio }}</text>
         </view>
+        <!-- 二维码入口（参照微信：资料卡右上角二维码图标） -->
+        <view class="profile__qr" hover-class="profile__qr--hover" @tap.stop="goQrcode">
+          <text class="profile__qr-icon">▦</text>
+        </view>
         <text class="profile__arrow">›</text>
       </view>
 
@@ -40,6 +44,11 @@
         <view class="cell" @tap="goPublish">
           <view class="cell__icon cell__icon--green">发</view>
           <text class="cell__title">发一条动态</text>
+          <text class="cell__arrow">›</text>
+        </view>
+        <view class="cell" @tap="goQrcode">
+          <view class="cell__icon cell__icon--indigo">码</view>
+          <text class="cell__title">我的二维码</text>
           <text class="cell__arrow">›</text>
         </view>
         <view class="cell" @tap="goMine">
@@ -185,6 +194,15 @@ const goMine = () => {
 
 /** 发动态：跳发布页 */
 const goPublish = () => uni.navigateTo({url: '/pages/publish/publish'});
+
+/** 我的二维码：跳二维码名片页（未登录先去登录） */
+const goQrcode = () => {
+  if (!accountStore.loggedIn) {
+    uni.navigateTo({url: LOGIN_PAGE});
+    return;
+  }
+  uni.navigateTo({url: '/pages/qrcode/qrcode'});
+};
 
 /** 编辑资料页 */
 const gotoSettings = () => uni.navigateTo({url: '/pages/settings/settings'});
@@ -367,6 +385,28 @@ onShow(() => {
   color: #c8ccd4;
 }
 
+.profile__qr {
+  width: 56rpx;
+  height: 56rpx;
+  margin-right: 16rpx;
+  border-radius: 12rpx;
+  background-color: $bg-page;
+  border: 1rpx solid $border;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.profile__qr--hover {
+  background-color: $brand-light;
+}
+
+.profile__qr-icon {
+  font-size: 38rpx;
+  line-height: 1;
+  color: $text-1;
+}
+
 .stats {
   display: flex;
   padding: 28rpx 32rpx;
@@ -421,6 +461,7 @@ onShow(() => {
 }
 
 .cell__icon--green { background-color: #07c160; }
+.cell__icon--indigo { background-color: #5b5bd6; }
 .cell__icon--blue { background-color: #1989fa; }
 .cell__icon--orange { background-color: #ff976a; }
 .cell__icon--teal { background-color: #00b8d9; }
